@@ -873,7 +873,7 @@ async function startComparison() {
           </button>
         </div>
 
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--border-color); padding-top: 12px;">
+        <div class="search-options-row">
           <!-- Search mode: Name vs Seating -->
           <div class="search-modes" style="margin: 0;">
             <button 

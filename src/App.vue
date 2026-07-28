@@ -5,12 +5,15 @@ import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
 
 // App States
 const db = ref(null);
-const loading = ref(true);
+const loading = ref(false); // Default to false since cloud mode doesn't load database
 const downloadProgress = ref(0);
 const totalDownloaded = ref("0 MB");
 const totalSize = ref("35.5 MB");
 const error = ref(null);
 const isDarkMode = ref(false);
+
+// Database Mode State
+const dbMode = ref('cloud'); // 'cloud' | 'local'
 
 // Query States
 const searchQuery = ref('');
@@ -179,6 +182,48 @@ async function downloadAndDecompressDb() {
   }
 }
 
+// Lazy initializer for local offline SQLite database
+async function initLocalDatabase() {
+  if (db.value) return; // Already initialized
+  
+  loading.value = true;
+  error.value = null;
+  try {
+    let dbBuffer = await getCachedDb();
+    if (!dbBuffer) {
+      dbBuffer = await downloadAndDecompressDb();
+    }
+    const SQL = await initSqlJs({
+      locateFile: file => file.endsWith('.wasm') ? wasmUrl : `${import.meta.env.BASE_URL}${file}`
+    });
+    db.value = new SQL.Database(dbBuffer);
+  } catch (err) {
+    error.value = err.message;
+    throw err;
+  } finally {
+    loading.value = false;
+  }
+}
+
+// Switch DB mode (Cloud vs Local)
+async function setDbMode(mode) {
+  if (mode === 'local') {
+    try {
+      await initLocalDatabase();
+      dbMode.value = 'local';
+      localStorage.setItem('db_mode', 'local');
+      fetchResults();
+    } catch (e) {
+      console.error("Local DB Init failed, falling back to Cloud:", e);
+      dbMode.value = 'cloud';
+    }
+  } else {
+    dbMode.value = 'cloud';
+    localStorage.setItem('db_mode', 'cloud');
+    fetchResults();
+  }
+}
+
 // Initialize Application
 onMounted(async () => {
   // Load Theme
@@ -188,29 +233,20 @@ onMounted(async () => {
     document.documentElement.setAttribute('data-theme', 'dark');
   }
 
-  try {
-    loading.value = true;
-    // 1. Try to load from Cache (IndexedDB)
-    let dbBuffer = await getCachedDb();
-    
-    // 2. If not cached, download and cache
-    if (!dbBuffer) {
-      dbBuffer = await downloadAndDecompressDb();
+  // Load Operation Mode
+  const savedMode = localStorage.getItem('db_mode') || 'cloud';
+  if (savedMode === 'local') {
+    try {
+      await initLocalDatabase();
+      dbMode.value = 'local';
+    } catch (e) {
+      console.error("Failed to load local DB on mount, falling back to Cloud:", e);
+      dbMode.value = 'cloud';
+      fetchResults();
     }
-
-    // 3. Initialize SQLite WASM
-    const SQL = await initSqlJs({
-      locateFile: file => file.endsWith('.wasm') ? wasmUrl : `${import.meta.env.BASE_URL}${file}`
-    });
-    
-    db.value = new SQL.Database(dbBuffer);
-    loading.value = false;
-    
-    // Initial fetch of leaderboard and charts
+  } else {
+    dbMode.value = 'cloud';
     fetchResults();
-  } catch (err) {
-    error.value = err.message;
-    loading.value = false;
   }
 });
 
@@ -246,12 +282,11 @@ function normalizeArabic(text) {
     .trim();
 }
 
-// Build SQL where conditions based on active filters
+// Build SQL where conditions based on active filters (for local query)
 function buildWhereClause() {
   let conditions = [];
   let params = [];
 
-  // 1. Status Filter
   if (selectedStatuses.value.length > 0) {
     const placeholders = selectedStatuses.value.map(() => '?').join(',');
     conditions.push(`s.status_id IN (${placeholders})`);
@@ -260,11 +295,9 @@ function buildWhereClause() {
     return { clause: "WHERE 1=0", params: [] };
   }
 
-  // 2. Grade Filter
   conditions.push("s.grade >= ? AND s.grade <= ?");
   params.push(minGrade.value, maxGrade.value);
 
-  // 3. Sector/Seating No Ranges Filter
   let sectorConditions = [];
   if (selectedSectors.value.includes('cairo')) {
     sectorConditions.push("(s.seating_no >= 2000000 AND s.seating_no <= 2380000)");
@@ -285,7 +318,6 @@ function buildWhereClause() {
     return { clause: "WHERE 1=0", params: [] };
   }
 
-  // 4. Search Filter
   const searchVal = searchQuery.value.trim();
   if (searchVal) {
     showLeaderboard.value = false;
@@ -298,9 +330,7 @@ function buildWhereClause() {
         return { clause: "WHERE 1=0", params: [] };
       }
     } else {
-      // Normalizing the search text
       let prefix = normalizeArabic(searchVal);
-      
       if (nameMatchMode.value === 'exact') {
         conditions.push("s.name = ?");
         params.push(prefix);
@@ -308,7 +338,6 @@ function buildWhereClause() {
         conditions.push("s.name LIKE ?");
         params.push(`%${prefix}%`);
       } else {
-        // 'prefix' mode: range query to utilize the name index efficiently
         conditions.push("s.name >= ? AND s.name < ?");
         params.push(prefix);
 
@@ -326,50 +355,80 @@ function buildWhereClause() {
 }
 
 // Fetch Results based on Search & Filters
-function fetchResults() {
-  if (!db.value) return;
+async function fetchResults() {
   searching.value = true;
 
-  try {
-    const { clause, params } = buildWhereClause();
-    if (clause === "WHERE 1=0") {
+  if (dbMode.value === 'cloud') {
+    try {
+      const params = new URLSearchParams();
+      params.append('q', searchQuery.value.trim());
+      params.append('mode', searchMode.value);
+      params.append('match', nameMatchMode.value);
+      params.append('sectors', selectedSectors.value.join(','));
+      params.append('statuses', selectedStatuses.value.join(','));
+      params.append('min_grade', minGrade.value);
+      params.append('max_grade', maxGrade.value);
+      params.append('limit', 100);
+
+      // Fetch from Serverless API
+      const response = await fetch(`/api/search?${params.toString()}`);
+      if (!response.ok) throw new Error('API request failed');
+
+      const data = await response.json();
+      results.value = data.results || [];
+      chartGradeData.value = data.charts.grades || { g90: 0, g80: 0, g70: 0, g60: 0, g50: 0, g_fail: 0 };
+      chartStatusData.value = data.charts.statuses || { passed: 0, second: 0, failed: 0, absent: 0 };
+      showLeaderboard.value = !searchQuery.value.trim();
+    } catch (err) {
+      console.error("Cloud search error:", err);
       results.value = [];
+    } finally {
       searching.value = false;
-      return;
     }
+  } else {
+    // Local SQLite Mode
+    if (!db.value) return;
+    try {
+      const { clause, params } = buildWhereClause();
+      if (clause === "WHERE 1=0") {
+        results.value = [];
+        searching.value = false;
+        return;
+      }
 
-    const query = `
-      SELECT s.seating_no, s.name, s.grade, c.name as status_name 
-      FROM students s 
-      JOIN statuses c ON s.status_id = c.id
-      ${clause}
-      ORDER BY s.grade DESC
-      LIMIT 100
-    `;
+      const query = `
+        SELECT s.seating_no, s.name, s.grade, c.name as status_name 
+        FROM students s 
+        JOIN statuses c ON s.status_id = c.id
+        ${clause}
+        ORDER BY s.grade DESC
+        LIMIT 100
+      `;
 
-    const stmt = db.value.prepare(query);
-    stmt.bind(params);
+      const stmt = db.value.prepare(query);
+      stmt.bind(params);
 
-    const tempResults = [];
-    while (stmt.step()) {
-      const row = stmt.getAsObject();
-      tempResults.push({
-        seating_no: row.seating_no,
-        name: row.name,
-        grade: row.grade,
-        status: row.status_name
-      });
+      const tempResults = [];
+      while (stmt.step()) {
+        const row = stmt.getAsObject();
+        tempResults.push({
+          seating_no: row.seating_no,
+          name: row.name,
+          grade: row.grade,
+          status: row.status_name
+        });
+      }
+      stmt.free();
+
+      results.value = tempResults;
+
+      // Trigger debounced update of charts
+      updateChartsData(clause, params);
+    } catch (err) {
+      console.error("Local Query Error:", err);
+    } finally {
+      searching.value = false;
     }
-    stmt.free();
-
-    results.value = tempResults;
-
-    // Trigger debounced update of charts
-    updateChartsData(clause, params);
-  } catch (err) {
-    console.error("Query Error:", err);
-  } finally {
-    searching.value = false;
   }
 }
 
@@ -382,11 +441,10 @@ function updateChartsData(clause, params) {
   }, 350);
 }
 
-// Aggregate data for SVG charts
+// Aggregate data for SVG charts (Local Mode)
 function runChartsQuery(clause, params) {
   if (!db.value) return;
   try {
-    // 1. Grade ranges aggregate query
     const gradeQuery = `
       SELECT 
         SUM(CASE WHEN grade >= 288 THEN 1 ELSE 0 END) as g90,
@@ -413,7 +471,6 @@ function runChartsQuery(clause, params) {
     }
     gradeStmt.free();
 
-    // 2. Status distribution query
     const statusQuery = `
       SELECT s.status_id, COUNT(*) as cnt 
       FROM students s
@@ -479,28 +536,41 @@ async function openStudentDetails(student) {
   studentRank.value = 0;
   studentPercentile.value = 0;
 
-  // Let the modal open animation complete, then execute ranking query
-  setTimeout(() => {
-    if (!db.value || !selectedStudent.value) return;
-    try {
-      const currentGrade = selectedStudent.value.grade;
-      
-      // Fast index rank count
-      const rankQuery = "SELECT COUNT(*) + 1 as rank FROM students WHERE grade > ?";
-      const stmt = db.value.prepare(rankQuery);
-      stmt.bind([currentGrade]);
-      if (stmt.step()) {
-        const row = stmt.getAsObject();
-        studentRank.value = row.rank;
-        // Percentile calculator
-        const percentile = ((919396 - row.rank) / 919396) * 100;
-        studentPercentile.value = Math.max(0.1, Math.min(100, percentile));
+  setTimeout(async () => {
+    if (!selectedStudent.value) return;
+    
+    if (dbMode.value === 'cloud') {
+      try {
+        const response = await fetch(`/api/rank?grade=${selectedStudent.value.grade}`);
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        studentRank.value = data.rank;
+        studentPercentile.value = data.percentile;
+      } catch (e) {
+        console.error("Cloud rank calculation error:", e);
+      } finally {
+        loadingRank.value = false;
       }
-      stmt.free();
-    } catch (err) {
-      console.error("Rank calculation error:", err);
-    } finally {
-      loadingRank.value = false;
+    } else {
+      // Local SQLite Mode
+      if (!db.value) return;
+      try {
+        const currentGrade = selectedStudent.value.grade;
+        const rankQuery = "SELECT COUNT(*) + 1 as rank FROM students WHERE grade > ?";
+        const stmt = db.value.prepare(rankQuery);
+        stmt.bind([currentGrade]);
+        if (stmt.step()) {
+          const row = stmt.getAsObject();
+          studentRank.value = row.rank;
+          const percentile = ((919396 - row.rank) / 919396) * 100;
+          studentPercentile.value = Math.max(0.1, Math.min(100, percentile));
+        }
+        stmt.free();
+      } catch (err) {
+        console.error("Local Rank calculation error:", err);
+      } finally {
+        loadingRank.value = false;
+      }
     }
   }, 200);
 }
@@ -571,8 +641,30 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
     </div>
     
     <div class="header-controls">
+      <!-- Database Operation Mode Selector -->
+      <div class="search-modes" style="margin-top: 0; background: var(--bg-card); padding: 3px; border-radius: 20px; border: 1px solid var(--border-color); display: flex; gap: 2px;">
+        <button 
+          class="mode-tab" 
+          :class="{ active: dbMode === 'cloud' }" 
+          @click="setDbMode('cloud')"
+          style="padding: 4px 10px; font-size: 11px; border-radius: 16px;"
+          title="التشغيل السحابي بدون تحميل بيانات"
+        >
+          سحابي ☁️
+        </button>
+        <button 
+          class="mode-tab" 
+          :class="{ active: dbMode === 'local' }" 
+          @click="setDbMode('local')"
+          style="padding: 4px 10px; font-size: 11px; border-radius: 16px;"
+          title="تحميل قاعدة البيانات بالكامل وتصفحها أوفلاين"
+        >
+          أوفلاين 💾
+        </button>
+      </div>
+
       <!-- Clear Cache / Reload -->
-      <button class="btn-control" @click="clearCacheAndReload" title="تحديث قاعدة البيانات">
+      <button class="btn-control" @click="clearCacheAndReload" title="تحديث قاعدة البيانات" v-if="dbMode === 'local'">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
         </svg>

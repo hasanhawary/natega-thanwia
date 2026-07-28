@@ -15,10 +15,10 @@ DATABASE_PATH = '/tmp/students.db'
 
 if not os.path.exists(DATABASE_PATH):
     POSSIBLE_GZ_PATHS = [
+        os.path.abspath(os.path.join(os.path.dirname(__file__), 'students.db.gz')),
         os.path.abspath(os.path.join(os.getcwd(), 'public', 'students.db.gz')),
         os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'public', 'students.db.gz')),
         os.path.abspath(os.path.join(os.getcwd(), 'students.db.gz')),
-        os.path.abspath(os.path.join(os.path.dirname(__file__), 'students.db.gz')),
         os.path.abspath(os.path.join(os.getcwd(), 'students.db')),
         os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'students.db'))
     ]

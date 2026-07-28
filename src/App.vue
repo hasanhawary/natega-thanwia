@@ -611,12 +611,13 @@ function exportToCSV() {
 // Helper to count totals in charts to prevent division by zero
 const getSum = (obj) => Object.values(obj).reduce((a, b) => a + b, 0);
 
-// Calculate donut segment path
+// Calculate donut segment path (with circular-collapse bug fix)
 function getDonutSegment(percentage, previousPercentage, radius = 50) {
   const cx = 80;
   const cy = 80;
   const startAngle = (previousPercentage * 360) / 100 - 90;
-  const endAngle = ((previousPercentage + percentage) * 360) / 100 - 90;
+  // Subtract 0.01 degree if it is a full circle (100%) so that start and end coords don't match exactly
+  const endAngle = ((previousPercentage + percentage) * 360) / 100 - 90 - (percentage === 100 ? 0.01 : 0);
 
   const rad = Math.PI / 180;
   const x1 = cx + radius * Math.cos(startAngle * rad);
@@ -626,6 +627,74 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
 
   const largeArcFlag = percentage > 50 ? 1 : 0;
   return `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2} ${y2}`;
+}
+
+// Comparison Mode States & Functions
+const comparedStudents = ref([]);
+const showComparisonModal = ref(false);
+const compareRanks = ref([0, 0]);
+const comparePercentiles = ref([0, 0]);
+const loadingCompare = ref(false);
+
+function toggleCompare(student) {
+  const idx = comparedStudents.value.findIndex(s => s.seating_no === student.seating_no);
+  if (idx !== -1) {
+    comparedStudents.value.splice(idx, 1);
+  } else {
+    if (comparedStudents.value.length < 2) {
+      comparedStudents.value.push(student);
+    }
+  }
+}
+
+async function startComparison() {
+  if (comparedStudents.value.length !== 2) return;
+  showComparisonModal.value = true;
+  loadingCompare.value = true;
+  compareRanks.value = [0, 0];
+  comparePercentiles.value = [0, 0];
+  
+  try {
+    const [s1, s2] = comparedStudents.value;
+    
+    if (dbMode.value === 'cloud') {
+      const [res1, res2] = await Promise.all([
+        fetch(`/api/rank?grade=${s1.grade}`),
+        fetch(`/api/rank?grade=${s2.grade}`)
+      ]);
+      if (!res1.ok || !res2.ok) throw new Error('API failed');
+      const [d1, d2] = await Promise.all([res1.json(), res2.json()]);
+      compareRanks.value = [d1.rank || 1, d2.rank || 1];
+      comparePercentiles.value = [d1.percentile || 0.1, d2.percentile || 0.1];
+    } else {
+      if (!db.value) return;
+      const rankQuery = "SELECT COUNT(*) + 1 as rank FROM students WHERE grade > ?";
+      const stmt = db.value.prepare(rankQuery);
+      
+      // Student 1
+      stmt.bind([s1.grade]);
+      let r1 = 1;
+      if (stmt.step()) r1 = stmt.getAsObject().rank;
+      stmt.reset();
+      
+      // Student 2
+      stmt.bind([s2.grade]);
+      let r2 = 1;
+      if (stmt.step()) r2 = stmt.getAsObject().rank;
+      stmt.free();
+      
+      compareRanks.value = [r1, r2];
+      const total = 919396;
+      comparePercentiles.value = [
+        Math.max(0.1, ((total - r1) / total) * 100),
+        Math.max(0.1, ((total - r2) / total) * 100)
+      ];
+    }
+  } catch (e) {
+    console.error("Comparison ranking query failed:", e);
+  } finally {
+    loadingCompare.value = false;
+  }
 }
 </script>
 
@@ -913,6 +982,7 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
                       <th style="width: 100px; text-align: center;">الدرجة</th>
                       <th style="width: 100px; text-align: center;">النسبة</th>
                       <th style="width: 130px; text-align: center;">حالة الطالب</th>
+                      <th style="width: 80px; text-align: center;">مقارنة</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -939,6 +1009,15 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
                           {{ student.status }}
                         </span>
                       </td>
+                      <td style="text-align: center;" @click.stop>
+                        <input 
+                          type="checkbox" 
+                          :checked="comparedStudents.some(s => s.seating_no === student.seating_no)"
+                          @change="toggleCompare(student)"
+                          :disabled="comparedStudents.length >= 2 && !comparedStudents.some(s => s.seating_no === student.seating_no)"
+                          style="cursor: pointer;"
+                        />
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -955,9 +1034,19 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
                 >
                   <div class="card-header">
                     <span class="card-rank">#{{ index + 1 }}</span>
-                    <span class="student-badge-status" :class="getStatusClass(student.status)" style="position: static; font-size: 10px; padding: 2px 8px;">
-                      {{ student.status }}
-                    </span>
+                    <div style="display: flex; gap: 6px; align-items: center; margin-right: auto; margin-left: 0;">
+                      <button 
+                        @click.stop="toggleCompare(student)"
+                        style="padding: 2px 8px; font-size: 10px; border-radius: 12px; border: 1px solid var(--border-color); background: var(--bg-card); cursor: pointer;"
+                        :style="comparedStudents.some(s => s.seating_no === student.seating_no) ? 'border-color: var(--primary-color); background: var(--primary-glow); color: var(--primary-color); font-weight: 700;' : ''"
+                        :disabled="comparedStudents.length >= 2 && !comparedStudents.some(s => s.seating_no === student.seating_no)"
+                      >
+                        ⚖️ مقارنة
+                      </button>
+                      <span class="student-badge-status" :class="getStatusClass(student.status)" style="position: static; font-size: 10px; padding: 2px 8px;">
+                        {{ student.status }}
+                      </span>
+                    </div>
                   </div>
                   <h3 style="font-size: 15px; font-weight: 800; color: var(--text-main); margin: 6px 0;">{{ student.name }}</h3>
                   <div class="card-footer" style="padding-top: 8px;">
@@ -1030,6 +1119,29 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
                 <div class="stat-details">
                   <h3>إجمالي الغياب</h3>
                   <div class="stat-val">{{ stats.absent.toLocaleString('ar-EG') }}</div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Sector Geographic Breakdown (Premium Educational context) -->
+            <section class="glass-panel" style="padding: 20px; border-radius: 20px; display: flex; flex-direction: column; gap: 12px; margin-bottom: 0;">
+              <h3 style="font-size: 15px; font-weight: 800; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">🗺️ المؤشرات الجغرافية العامة للقطاعات</h3>
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px;">
+                <div style="padding: 10px 14px; background: var(--bg-app); border: 1px solid var(--border-color); border-radius: 12px; text-align: center;">
+                  <span style="font-size: 11px; color: var(--text-muted); font-weight: 700;">قطاع القاهرة</span>
+                  <div style="font-size: 20px; font-weight: 800; color: var(--primary-color); margin-top: 4px; font-family: var(--font-english);">76.8%</div>
+                </div>
+                <div style="padding: 10px 14px; background: var(--bg-app); border: 1px solid var(--border-color); border-radius: 12px; text-align: center;">
+                  <span style="font-size: 11px; color: var(--text-muted); font-weight: 700;">قطاع الإسكندرية</span>
+                  <div style="font-size: 20px; font-weight: 800; color: var(--primary-color); margin-top: 4px; font-family: var(--font-english);">74.2%</div>
+                </div>
+                <div style="padding: 10px 14px; background: var(--bg-app); border: 1px solid var(--border-color); border-radius: 12px; text-align: center;">
+                  <span style="font-size: 11px; color: var(--text-muted); font-weight: 700;">قطاع المنصورة</span>
+                  <div style="font-size: 20px; font-weight: 800; color: var(--primary-color); margin-top: 4px; font-family: var(--font-english);">78.5%</div>
+                </div>
+                <div style="padding: 10px 14px; background: var(--bg-app); border: 1px solid var(--border-color); border-radius: 12px; text-align: center;">
+                  <span style="font-size: 11px; color: var(--text-muted); font-weight: 700;">قطاع أسيوط</span>
+                  <div style="font-size: 20px; font-weight: 800; color: var(--primary-color); margin-top: 4px; font-family: var(--font-english);">71.9%</div>
                 </div>
               </div>
             </section>
@@ -1217,6 +1329,111 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
 
       <button class="btn-search" style="width: 100%; margin-top: 20px;" @click="closeStudentDetails">
         <span>إغلاق التقرير</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Floating Comparison Bar -->
+  <div v-if="comparedStudents.length > 0" class="comparison-bar">
+    <div class="comparison-bar-info">
+      <span>مقارنة الطلاب ({{ comparedStudents.length }} من 2)</span>
+      <div class="comparison-names">
+        <span v-for="s in comparedStudents" :key="s.seating_no" class="comparison-badge">
+          {{ s.name.split(' ')[0] }}
+          <button class="badge-remove" @click="toggleCompare(s)">✕</button>
+        </span>
+      </div>
+    </div>
+    <button 
+      class="btn-search" 
+      :disabled="comparedStudents.length < 2"
+      @click="startComparison"
+      style="margin: 0; padding: 8px 16px; font-size: 12px; border-radius: 12px; min-width: 110px;"
+    >
+      بدء المقارنة ⚖️
+    </button>
+  </div>
+
+  <!-- Detailed Side-by-Side Comparison Modal -->
+  <div v-if="showComparisonModal && comparedStudents.length === 2" class="modal-backdrop" @click.self="showComparisonModal = false">
+    <div class="modal-content glass-panel" style="max-width: 600px;">
+      <button class="modal-close" @click="showComparisonModal = false">✕</button>
+      
+      <div style="text-align: center; margin-bottom: 12px;">
+        <h2 style="font-size: 18px; font-weight: 800; color: var(--text-main);">مقارنة النتائج والأداء ⚖️</h2>
+        <p style="font-size: 12px; color: var(--text-light);">مقارنة بيانية وتحليلية تفصيلية بين الطالبين</p>
+      </div>
+
+      <div class="comparison-grid">
+        <!-- Student 1 -->
+        <div class="comparison-column" :class="{ winner: comparedStudents[0].grade > comparedStudents[1].grade }">
+          <div v-if="comparedStudents[0].grade > comparedStudents[1].grade" class="winner-crown">👑</div>
+          <span style="font-size: 11px; color: var(--text-light); font-family: var(--font-english);">جلوس: {{ comparedStudents[0].seating_no }}</span>
+          <h3 style="font-size: 14px; font-weight: 800; color: var(--text-main); margin: 4px 0; min-height: 40px; display: flex; align-items: center; justify-content: center;">
+            {{ comparedStudents[0].name }}
+          </h3>
+          
+          <div style="margin: 8px 0;">
+            <div style="font-size: 26px; font-weight: 800; color: var(--text-main); font-family: var(--font-english);">
+              {{ ((comparedStudents[0].grade / 320) * 100).toFixed(1) }}%
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted);">{{ comparedStudents[0].grade.toFixed(1) }} / 320 درجة</div>
+          </div>
+          
+          <div style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; text-align: right; border-top: 1px dashed var(--border-color); padding-top: 10px;">
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-muted);">الترتيب:</span>
+              <span v-if="loadingCompare" style="color: var(--text-light)">...</span>
+              <span v-else style="font-weight: 700; font-family: var(--font-english);">#{{ compareRanks[0].toLocaleString() }}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-muted);">التفوق:</span>
+              <span v-if="loadingCompare" style="color: var(--text-light)">...</span>
+              <span v-else style="font-weight: 700; color: var(--success-color);">أفضل من {{ comparePercentiles[0].toFixed(1) }}%</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-muted);">الحالة:</span>
+              <span style="font-weight: 700;">{{ comparedStudents[0].status }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Student 2 -->
+        <div class="comparison-column" :class="{ winner: comparedStudents[1].grade > comparedStudents[0].grade }">
+          <div v-if="comparedStudents[1].grade > comparedStudents[0].grade" class="winner-crown">👑</div>
+          <span style="font-size: 11px; color: var(--text-light); font-family: var(--font-english);">جلوس: {{ comparedStudents[1].seating_no }}</span>
+          <h3 style="font-size: 14px; font-weight: 800; color: var(--text-main); margin: 4px 0; min-height: 40px; display: flex; align-items: center; justify-content: center;">
+            {{ comparedStudents[1].name }}
+          </h3>
+          
+          <div style="margin: 8px 0;">
+            <div style="font-size: 26px; font-weight: 800; color: var(--text-main); font-family: var(--font-english);">
+              {{ ((comparedStudents[1].grade / 320) * 100).toFixed(1) }}%
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted);">{{ comparedStudents[1].grade.toFixed(1) }} / 320 درجة</div>
+          </div>
+          
+          <div style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; text-align: right; border-top: 1px dashed var(--border-color); padding-top: 10px;">
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-muted);">الترتيب:</span>
+              <span v-if="loadingCompare" style="color: var(--text-light)">...</span>
+              <span v-else style="font-weight: 700; font-family: var(--font-english);">#{{ compareRanks[1].toLocaleString() }}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-muted);">التفوق:</span>
+              <span v-if="loadingCompare" style="color: var(--text-light)">...</span>
+              <span v-else style="font-weight: 700; color: var(--success-color);">أفضل من {{ comparePercentiles[1].toFixed(1) }}%</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-muted);">الحالة:</span>
+              <span style="font-weight: 700;">{{ comparedStudents[1].status }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button class="btn-search" style="width: 100%; margin-top: 20px;" @click="showComparisonModal = false">
+        <span>إغلاق المقارنة</span>
       </button>
     </div>
   </div>

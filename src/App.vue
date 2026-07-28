@@ -103,10 +103,15 @@ function cacheDb(arrayBuffer) {
   });
 }
 
-// Download database with progress
+let downloadAbortController = null;
+
+// Download database with progress (with AbortController support)
 async function downloadAndDecompressDb() {
   try {
-    const response = await fetch(`${import.meta.env.BASE_URL}students.db.gz`);
+    downloadAbortController = new AbortController();
+    const response = await fetch(`${import.meta.env.BASE_URL}students.db.gz`, {
+      signal: downloadAbortController.signal
+    });
     if (!response.ok) throw new Error('فشل تحميل قاعدة البيانات من السيرفر (HTTP ' + response.status + ').');
 
     const reader = response.body.getReader();
@@ -177,8 +182,13 @@ async function downloadAndDecompressDb() {
     await cacheDb(decompressedBuffer);
     return decompressedBuffer;
   } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error('تم إلغاء تحميل قاعدة البيانات بطلب من المستخدم.');
+    }
     console.error(err);
     throw new Error('حدث خطأ أثناء تحميل قاعدة البيانات أو فك ضغطها: ' + (err.message || err));
+  } finally {
+    downloadAbortController = null;
   }
 }
 
@@ -205,19 +215,53 @@ async function initLocalDatabase() {
   }
 }
 
-// Switch DB mode (Cloud vs Local)
+// Prompt and switch DB Mode states
+const showDownloadPrompt = ref(false);
+
+async function startDbDownload() {
+  showDownloadPrompt.value = false;
+  try {
+    await initLocalDatabase();
+    dbMode.value = 'local';
+    localStorage.setItem('db_mode', 'local');
+    fetchResults();
+  } catch (e) {
+    console.error("Local DB download and init failed, falling back to Cloud:", e);
+    dbMode.value = 'cloud';
+  }
+}
+
+function cancelDownload() {
+  if (downloadAbortController) {
+    downloadAbortController.abort();
+    downloadAbortController = null;
+  }
+  loading.value = false;
+  showDownloadPrompt.value = false;
+  dbMode.value = 'cloud';
+  localStorage.setItem('db_mode', 'cloud');
+  fetchResults();
+}
+
 async function setDbMode(mode) {
   if (mode === 'local') {
-    try {
-      await initLocalDatabase();
-      dbMode.value = 'local';
-      localStorage.setItem('db_mode', 'local');
-      fetchResults();
-    } catch (e) {
-      console.error("Local DB Init failed, falling back to Cloud:", e);
-      dbMode.value = 'cloud';
+    const cached = await getCachedDb();
+    if (cached) {
+      try {
+        await initLocalDatabase();
+        dbMode.value = 'local';
+        localStorage.setItem('db_mode', 'local');
+        fetchResults();
+      } catch (e) {
+        console.error("Failed to load cached local DB:", e);
+        dbMode.value = 'cloud';
+      }
+    } else {
+      // Show confirmation prompt before downloading heavy database!
+      showDownloadPrompt.value = true;
     }
   } else {
+    // Return to Cloud mode
     dbMode.value = 'cloud';
     localStorage.setItem('db_mode', 'cloud');
     fetchResults();
@@ -753,6 +797,7 @@ async function startComparison() {
 
   <main class="container" style="flex-grow: 1; display: flex; flex-direction: column; gap: 24px; padding-top: 0;">
     <!-- Loading Database State -->
+    <!-- Loading Database State -->
     <div v-if="loading" class="db-loader-container glass-panel">
       <div class="circular-loader">
         <svg>
@@ -764,13 +809,34 @@ async function startComparison() {
       <h2 class="loader-title">جاري تحميل قاعدة البيانات...</h2>
       <p class="loader-subtitle">
         نقوم بتحميل وتجهيز قاعدة البيانات لنتائج امتحانات الثانوية العامة (حوالي {{ totalSize }}). 
-        يتم هذا الإجراء مرة واحدة فقط، وسيتم حفظ البيانات على جهازك لتصفحها فوراً في الزيارات القادمة بدون إنترنت وبسرعة فائقة.
+        سيتم حفظ البيانات على جهازك لتصفحها فوراً في الزيارات القادمة بدون إنترنت وبسرعة فائقة.
       </p>
       <div class="loader-bar-outer">
         <div class="loader-bar-inner" :style="{ width: downloadProgress + '%' }"></div>
       </div>
       <div style="font-size: 12px; margin-top: 10px; color: var(--text-muted); font-family: var(--font-english);">
         {{ totalDownloaded }} / {{ totalSize }}
+      </div>
+      <button 
+        class="btn-search" 
+        style="margin-top: 20px; background: rgba(239, 68, 68, 0.1); color: var(--danger-color); border: 1px solid var(--danger-color); font-weight: 700;"
+        @click="cancelDownload"
+      >
+        إلغاء التحميل والعودة للوضع السحابي ☁️
+      </button>
+    </div>
+
+    <!-- Download Confirmation Prompt State -->
+    <div v-else-if="showDownloadPrompt" class="db-loader-container glass-panel" style="text-align: center;">
+      <div style="font-size: 54px; margin-bottom: 12px; animation: bounce 1.2s infinite alternate;">📥</div>
+      <h2 class="loader-title" style="color: var(--text-main);">تفعيل وضع التشغيل المحلي (أوفلاين)</h2>
+      <p class="loader-subtitle" style="max-width: 480px; margin: 12px auto; line-height: 1.6; color: var(--text-muted);">
+        يتطلب الانتقال للوضع المحلي تحميل ملف قاعدة بيانات نتائج الشهادة الثانوية العامة (حوالي {{ totalSize }}). 
+        سيتم تحميل وحفظ الملف في ذاكرة متصفحك لمرة واحدة فقط لتتمكن من التصفح والبحث بدون إنترنت وبسرعة فائقة جداً وبخصوصية تامة.
+      </p>
+      <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px; flex-wrap: wrap;">
+        <button class="btn-search" @click="startDbDownload" style="margin: 0; padding: 10px 24px;">بدء تحميل قاعدة البيانات 💾</button>
+        <button class="btn-export" @click="cancelDownload" style="margin: 0; padding: 10px 24px;">العودة للوضع السحابي ☁️</button>
       </div>
     </div>
 

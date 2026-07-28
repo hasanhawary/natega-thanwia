@@ -657,7 +657,7 @@ const getSum = (obj) => Object.values(obj).reduce((a, b) => a + b, 0);
 
 // Calculate donut segment path (with circular-collapse bug fix)
 function getDonutSegment(percentage, previousPercentage, radius = 50) {
-  const cx = 80;
+  const cx = 65;
   const cy = 80;
   const startAngle = (previousPercentage * 360) / 100 - 90;
   // Subtract 0.01 degree if it is a full circle (100%) so that start and end coords don't match exactly
@@ -1291,10 +1291,10 @@ async function startComparison() {
                         stroke-width="15"
                       />
 
-                      <text x="80" y="85" text-anchor="middle" font-size="14" font-weight="800" fill="var(--text-main)">
+                      <text x="65" y="85" text-anchor="middle" font-size="14" font-weight="800" fill="var(--text-main)">
                         {{ getSum(chartStatusData) >= 1000 ? (getSum(chartStatusData) / 1000).toFixed(1) + 'k' : getSum(chartStatusData) }}
                       </text>
-                      <text x="80" y="98" text-anchor="middle" font-size="8" fill="var(--text-muted)">المجموع</text>
+                      <text x="65" y="98" text-anchor="middle" font-size="8" fill="var(--text-muted)">المجموع</text>
 
                       <g transform="translate(135, 30)" font-size="9" font-weight="700">
                         <circle cx="0" cy="0" r="4" fill="var(--success-color)" />

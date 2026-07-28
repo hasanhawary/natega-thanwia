@@ -718,185 +718,88 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
     <!-- Main Content Area -->
     <div v-else style="display: flex; flex-direction: column; gap: 24px;">
       
-      <!-- Stats Dashboard Cards -->
-      <section class="stats-grid">
-        <div class="stat-card glass-panel">
-          <div class="stat-icon primary">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+      <!-- HERO SEARCH SECTION (First thing visible for UI/UX excellence) -->
+      <section class="glass-panel" style="padding: 24px; display: flex; flex-direction: column; gap: 16px; border-radius: 20px; box-shadow: var(--shadow-sm);">
+        <div class="search-container" style="box-shadow: none; padding: 0; background: transparent; border: none; margin: 0;">
+          <div class="search-input-wrapper">
+            <input 
+              type="text" 
+              v-model="searchQuery" 
+              :placeholder="searchMode === 'name' ? 'أدخل اسم الطالب (مثال: نغم ياسر...)' : 'أدخل رقم الجلوس المكون من 7 أرقام...'"
+              @keyup.enter="handleSearch"
+            />
+            <svg class="search-icon-svg" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </div>
-          <div class="stat-details">
-            <h3>إجمالي الطلاب</h3>
-            <div class="stat-val">{{ stats.total.toLocaleString('ar-EG') }}</div>
-          </div>
+          
+          <button class="btn-search" @click="handleSearch">
+            <span>ابحث الآن</span>
+          </button>
         </div>
 
-        <div class="stat-card glass-panel">
-          <div class="stat-icon success">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
-            </svg>
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--border-color); padding-top: 12px;">
+          <!-- Search mode: Name vs Seating -->
+          <div class="search-modes" style="margin: 0;">
+            <button 
+              class="mode-tab" 
+              :class="{ active: searchMode === 'name' }" 
+              @click="handleSearchModeChange('name')"
+            >
+              البحث بالاسم
+            </button>
+            <button 
+              class="mode-tab" 
+              :class="{ active: searchMode === 'seating' }" 
+              @click="handleSearchModeChange('seating')"
+            >
+              البحث برقم الجلوس
+            </button>
           </div>
-          <div class="stat-details">
-            <h3>نسبة النجاح العامة</h3>
-            <div class="stat-val">{{ stats.passRate }}</div>
-          </div>
-        </div>
 
-        <div class="stat-card glass-panel">
-          <div class="stat-icon warning">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"/><line x1="12" y1="6" x2="12" y2="12"/><polyline points="12 12 16 14"/>
-            </svg>
-          </div>
-          <div class="stat-details">
-            <h3>متوسط الدرجات</h3>
-            <div class="stat-val">{{ stats.avgGrade }}</div>
-          </div>
-        </div>
-
-        <div class="stat-card glass-panel">
-          <div class="stat-icon danger">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
-            </svg>
-          </div>
-          <div class="stat-details">
-            <h3>إجمالي الغياب الكلي</h3>
-            <div class="stat-val">{{ stats.absent.toLocaleString('ar-EG') }}</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- SVG Charts (Visual Analytics) -->
-      <section class="charts-container">
-        <!-- Grade Distribution Bar Chart -->
-        <div class="chart-card glass-panel">
-          <h3 class="chart-title">📊 توزيع الدرجات للطلاب المختارين</h3>
-          <div class="chart-wrapper">
-            <svg viewBox="0 0 400 200" width="100%" height="100%">
-              <g v-if="getSum(chartGradeData) > 0">
-                <!-- Max count finder for scaling -->
-                <line x1="40" y1="160" x2="380" y2="160" stroke="var(--border-color)" stroke-width="2" />
-                
-                <!-- Bars -->
-                <!-- We map the bars dynamically based on maximum value -->
-                <g v-for="(val, key, index) in chartGradeData" :key="key">
-                  <rect
-                    :x="55 + index * 55"
-                    :y="160 - (val / Math.max(...Object.values(chartGradeData))) * 130"
-                    width="30"
-                    :height="(val / Math.max(...Object.values(chartGradeData))) * 130"
-                    fill="url(#barGradient)"
-                    rx="4"
-                  />
-                  <!-- Labels -->
-                  <text :x="70 + index * 55" y="178" font-size="10" text-anchor="middle" fill="var(--text-muted)" font-weight="700">
-                    {{ key === 'g90' ? '+90%' : key === 'g80' ? '80%' : key === 'g70' ? '70%' : key === 'g60' ? '60%' : key === 'g50' ? '50%' : 'رسوب' }}
-                  </text>
-                  <!-- Value count -->
-                  <text :x="70 + index * 55" :y="150 - (val / Math.max(...Object.values(chartGradeData))) * 130" font-size="10" text-anchor="middle" fill="var(--text-main)" font-weight="700">
-                    {{ val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val }}
-                  </text>
-                </g>
-              </g>
-              <text v-else x="200" y="100" text-anchor="middle" fill="var(--text-light)" font-size="14">لا توجد بيانات درجات للتمثيل البياني</text>
-              <defs>
-                <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stop-color="var(--primary-color)" />
-                  <stop offset="100%" stop-color="#818cf8" stop-opacity="0.3" />
-                </linearGradient>
-              </defs>
-            </svg>
-          </div>
-        </div>
-
-        <!-- Status Distribution Donut Chart -->
-        <div class="chart-card glass-panel">
-          <h3 class="chart-title">🍩 نسبة حالات الطلاب المختارين</h3>
-          <div class="chart-wrapper">
-            <svg viewBox="0 0 200 160" width="100%" height="100%">
-              <g v-if="getSum(chartStatusData) > 0">
-                <!-- Donut Chart Segments -->
-                <path
-                  v-if="chartStatusData.passed > 0"
-                  :d="getDonutSegment((chartStatusData.passed / getSum(chartStatusData)) * 100, 0)"
-                  fill="none"
-                  stroke="var(--success-color)"
-                  stroke-width="15"
-                />
-                <path
-                  v-if="chartStatusData.second > 0"
-                  :d="getDonutSegment((chartStatusData.second / getSum(chartStatusData)) * 100, (chartStatusData.passed / getSum(chartStatusData)) * 100)"
-                  fill="none"
-                  stroke="var(--warning-color)"
-                  stroke-width="15"
-                />
-                <path
-                  v-if="chartStatusData.failed > 0"
-                  :d="getDonutSegment(
-                    (chartStatusData.failed / getSum(chartStatusData)) * 100, 
-                    ((chartStatusData.passed + chartStatusData.second) / getSum(chartStatusData)) * 100
-                  )"
-                  fill="none"
-                  stroke="var(--danger-color)"
-                  stroke-width="15"
-                />
-                <path
-                  v-if="chartStatusData.absent > 0"
-                  :d="getDonutSegment(
-                    (chartStatusData.absent / getSum(chartStatusData)) * 100, 
-                    ((chartStatusData.passed + chartStatusData.second + chartStatusData.failed) / getSum(chartStatusData)) * 100
-                  )"
-                  fill="none"
-                  stroke="var(--absent-color)"
-                  stroke-width="15"
-                />
-
-                <!-- Centered Total text -->
-                <text x="80" y="85" text-anchor="middle" font-size="14" font-weight="800" fill="var(--text-main)">
-                  {{ getSum(chartStatusData) >= 1000 ? (getSum(chartStatusData) / 1000).toFixed(1) + 'k' : getSum(chartStatusData) }}
-                </text>
-                <text x="80" y="98" text-anchor="middle" font-size="8" fill="var(--text-muted)">إجمالي التصفية</text>
-
-                <!-- Legends -->
-                <g transform="translate(135, 30)" font-size="9" font-weight="700">
-                  <circle cx="0" cy="0" r="4" fill="var(--success-color)" />
-                  <text x="10" y="3" fill="var(--text-muted)">ناجح</text>
-
-                  <circle cx="0" cy="20" r="4" fill="var(--warning-color)" />
-                  <text x="10" y="23" fill="var(--text-muted)">دور ثان</text>
-
-                  <circle cx="0" cy="40" r="4" fill="var(--danger-color)" />
-                  <text x="10" y="43" fill="var(--text-muted)">راسب</text>
-
-                  <circle cx="0" cy="60" r="4" fill="var(--absent-color)" />
-                  <text x="10" y="63" fill="var(--text-muted)">غائب</text>
-                </g>
-              </g>
-              <text v-else x="100" y="80" text-anchor="middle" fill="var(--text-light)" font-size="14">لا توجد حالات طلاب للتمثيل البياني</text>
-            </svg>
+          <!-- Name matching options -->
+          <div v-if="searchMode === 'name'" class="search-modes" style="margin: 0; background: var(--bg-card); padding: 4px; border-radius: 20px; border: 1px solid var(--border-color);">
+            <button 
+              class="mode-tab" 
+              :class="{ active: nameMatchMode === 'prefix' }" 
+              @click="nameMatchMode = 'prefix'"
+              title="يبحث عن الأسماء التي تبدأ بالمدخل (سريع جداً)"
+            >
+              يبدأ بـ
+            </button>
+            <button 
+              class="mode-tab" 
+              :class="{ active: nameMatchMode === 'exact' }" 
+              @click="nameMatchMode = 'exact'"
+              title="مطابقة الاسم الكامل تماماً"
+            >
+              مطابقة تامة
+            </button>
+            <button 
+              class="mode-tab" 
+              :class="{ active: nameMatchMode === 'contains' }" 
+              @click="nameMatchMode = 'contains'"
+              title="يبحث عن أي جزء بالاسم (قد يستغرق ثوانٍ)"
+            >
+              يحتوي على
+            </button>
           </div>
         </div>
       </section>
 
-      <!-- Search & Workspace Layout -->
+      <!-- Dashboard Grid Layout -->
       <div class="dashboard-layout">
         
-        <!-- Sidebar Filter controls -->
-        <!-- Drawer backdrop for mobile -->
+        <!-- Filters Sidebar Drawer -->
         <div v-if="isDrawerOpen" class="drawer-backdrop" @click="isDrawerOpen = false"></div>
         
         <aside class="filters-sidebar glass-panel" :class="{ 'drawer-open': isDrawerOpen }">
-          
-          <!-- Close button inside drawer for mobile -->
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;" v-if="isDrawerOpen">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;" v-if="isDrawerOpen">
             <h3 style="font-size: 16px; font-weight: 800;">تصفية وفرز النتائج</h3>
             <button class="btn-control" @click="isDrawerOpen = false" style="padding: 6px 12px; font-size: 12px;">إغلاق</button>
           </div>
 
-          <!-- Sector Filters -->
+          <!-- Sectors mapping -->
           <div>
             <div class="filter-section-title">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -915,7 +818,7 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
             </div>
           </div>
 
-          <!-- Grade Ranges -->
+          <!-- Grade Range -->
           <div>
             <div class="filter-section-title">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -923,7 +826,6 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
               </svg>
               <span>معدل الدرجات والنسبة</span>
             </div>
-            
             <div class="range-container">
               <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted);">
                 <span>الحد الأدنى</span>
@@ -944,7 +846,7 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
             </div>
           </div>
 
-          <!-- Status Filters -->
+          <!-- Status -->
           <div>
             <div class="filter-section-title">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -971,144 +873,271 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
               </label>
             </div>
           </div>
-
         </aside>
 
-        <!-- Main Query and Dashboard Results -->
-        <div class="content-area">
+        <!-- Main Query Results Area -->
+        <div class="content-area" style="display: flex; flex-direction: column; gap: 24px;">
           
-          <!-- Search Header Panel -->
-          <section class="search-container glass-panel">
-            <div class="search-input-wrapper">
-              <input 
-                type="text" 
-                v-model="searchQuery" 
-                :placeholder="searchMode === 'name' ? 'أدخل اسم الطالب (مثال: نغم ياسر...)' : 'أدخل رقم الجلوس المكون من 7 أرقام...'"
-                @keyup.enter="handleSearch"
-              />
-              <svg class="search-icon-svg" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </div>
-            
-            <button class="btn-search" @click="handleSearch">
-              <span>ابحث الآن</span>
-            </button>
-          </section>
+          <!-- Results Area -->
+          <div class="glass-panel" style="padding: 20px; border-radius: 20px; display: flex; flex-direction: column; gap: 16px;">
+            <div class="results-header" style="margin-top: 0; padding-bottom: 12px; border-bottom: 1px solid var(--border-color);">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <h2 class="results-title" style="font-size: 18px; font-weight: 800;">{{ showLeaderboard ? 'الطلاب الأوائل (حسب الفلترة)' : 'نتائج البحث الحالي' }}</h2>
+                <span class="results-count" style="padding: 2px 10px;">{{ results.length }} طالب</span>
+              </div>
 
-          <div style="padding: 0 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-            <div class="search-modes" style="margin-top: 0;">
-              <button 
-                class="mode-tab" 
-                :class="{ active: searchMode === 'name' }" 
-                @click="handleSearchModeChange('name')"
-              >
-                البحث بالاسم
-              </button>
-              <button 
-                class="mode-tab" 
-                :class="{ active: searchMode === 'seating' }" 
-                @click="handleSearchModeChange('seating')"
-              >
-                البحث برقم الجلوس
+              <!-- CSV Export button -->
+              <button v-if="results.length > 0" class="btn-export" @click="exportToCSV" title="تصدير النتائج كملف Excel">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                <span>تحميل التقرير (Excel)</span>
               </button>
             </div>
 
-            <!-- Name Matching Modes -->
-            <div v-if="searchMode === 'name'" class="search-modes" style="margin-top: 0; background: var(--bg-card); padding: 4px; border-radius: 20px; border: 1px solid var(--border-color);">
-              <button 
-                class="mode-tab" 
-                :class="{ active: nameMatchMode === 'prefix' }" 
-                @click="nameMatchMode = 'prefix'"
-                title="يبحث عن الأسماء التي تبدأ بالنص المدخل (سريع جداً)"
-              >
-                يبدأ بـ
-              </button>
-              <button 
-                class="mode-tab" 
-                :class="{ active: nameMatchMode === 'exact' }" 
-                @click="nameMatchMode = 'exact'"
-                title="مطابقة الاسم الكامل تماماً"
-              >
-                مطابقة تامة
-              </button>
-              <button 
-                class="mode-tab" 
-                :class="{ active: nameMatchMode === 'contains' }" 
-                @click="nameMatchMode = 'contains'"
-                title="يبحث عن أي تطابق داخل الاسم (قد يستغرق 1-2 ثانية)"
-              >
-                يحتوي على
-              </button>
-            </div>
-          </div>
-
-          <!-- Results Header Actions -->
-          <div class="results-header" style="margin-top: 10px;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <h2 class="results-title">{{ showLeaderboard ? 'الطلاب الأوائل (حسب الفلترة)' : 'نتائج البحث الحالي' }}</h2>
-              <span class="results-count">تم العثور على {{ results.length }} طالب</span>
+            <!-- Loader inside results area -->
+            <div v-if="searching" style="padding: 60px; text-align: center; color: var(--primary-color);">
+              <div style="display: inline-block; width: 40px; height: 40px; border: 4px solid var(--primary-glow); border-top-color: var(--primary-color); border-radius: 50%; animation: spin 1s infinite linear;"></div>
+              <h4 style="margin-top: 16px; font-weight: 700; color: var(--text-main);">جاري جلب النتائج...</h4>
             </div>
 
-            <!-- CSV Export button -->
-            <button v-if="results.length > 0" class="btn-export" @click="exportToCSV" title="تصدير النتائج كملف CSV">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
-              <span>تحميل التقرير (Excel)</span>
-            </button>
-          </div>
+            <div v-else>
+              <!-- 1. Desktop Results Table (hidden on mobile) -->
+              <div class="table-responsive-desktop">
+                <table class="leaderboard-table" style="min-width: 100%;">
+                  <thead>
+                    <tr>
+                      <th style="width: 60px; text-align: center;">#</th>
+                      <th style="width: 120px;">رقم الجلوس</th>
+                      <th>الاسم الكامل</th>
+                      <th style="width: 100px; text-align: center;">الدرجة</th>
+                      <th style="width: 100px; text-align: center;">النسبة</th>
+                      <th style="width: 130px; text-align: center;">حالة الطالب</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(student, index) in results" :key="student.seating_no" @click="openStudentDetails(student)" style="cursor: pointer;">
+                      <td style="text-align: center;">
+                        <div class="rank-badge" :class="index < 3 ? 'rank-' + (index + 1) : 'rank-other'">
+                          {{ index + 1 }}
+                        </div>
+                      </td>
+                      <td style="font-family: var(--font-english); font-weight: 600; color: var(--text-muted)">
+                        {{ student.seating_no }}
+                      </td>
+                      <td style="font-weight: 700; color: var(--text-main)">
+                        {{ student.name }}
+                      </td>
+                      <td style="text-align: center; font-family: var(--font-english); font-weight: 800; font-size: 15px;">
+                        {{ student.grade.toFixed(1) }}
+                      </td>
+                      <td style="text-align: center; font-family: var(--font-english); font-weight: 700; color: var(--primary-color)">
+                        {{ ((student.grade / 320) * 100).toFixed(1) }}%
+                      </td>
+                      <td style="text-align: center;">
+                        <span class="student-badge-status" :class="getStatusClass(student.status)" style="position: static; display: inline-block;">
+                          {{ student.status }}
+                        </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
 
-          <!-- Leaderboard / Results Table View -->
-          <section class="leaderboard-panel glass-panel" style="padding: 0; overflow: hidden; margin-top: 4px;">
-            <div class="leaderboard-table-container" style="border: none; border-radius: 0;">
-              <table class="leaderboard-table">
-                <thead>
-                  <tr>
-                    <th style="width: 70px; text-align: center;">#</th>
-                    <th style="width: 120px;">رقم الجلوس</th>
-                    <th>الاسم الكامل</th>
-                    <th style="width: 100px; text-align: center;">الدرجة</th>
-                    <th style="width: 100px; text-align: center;">النسبة</th>
-                    <th style="width: 130px; text-align: center;">حالة الطالب</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(student, index) in results" :key="student.seating_no" @click="openStudentDetails(student)" style="cursor: pointer;">
-                    <td style="text-align: center;">
-                      <div class="rank-badge" :class="index < 3 ? 'rank-' + (index + 1) : 'rank-other'">
-                        {{ index + 1 }}
-                      </div>
-                    </td>
-                    <td style="font-family: var(--font-english); font-weight: 600; color: var(--text-muted)">
-                      {{ student.seating_no }}
-                    </td>
-                    <td style="font-weight: 700; color: var(--text-main)">
-                      {{ student.name }}
-                    </td>
-                    <td style="text-align: center; font-family: var(--font-english); font-weight: 800; font-size: 15px;">
-                      {{ student.grade.toFixed(1) }}
-                    </td>
-                    <td style="text-align: center; font-family: var(--font-english); font-weight: 700; color: var(--primary-color)">
-                      {{ ((student.grade / 320) * 100).toFixed(1) }}%
-                    </td>
-                    <td style="text-align: center;">
-                      <span class="student-badge-status" :class="getStatusClass(student.status)" style="position: static; display: inline-block;">
-                        {{ student.status }}
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <!-- 2. Mobile Results Cards Fallback (hidden on desktop, beautiful on mobile) -->
+              <div class="cards-responsive-mobile" style="padding: 0;">
+                <div 
+                  v-for="(student, index) in results" 
+                  :key="student.seating_no" 
+                  class="student-mobile-card glass-panel" 
+                  @click="openStudentDetails(student)"
+                  style="border-radius: 12px; padding: 14px;"
+                >
+                  <div class="card-header">
+                    <span class="card-rank">#{{ index + 1 }}</span>
+                    <span class="student-badge-status" :class="getStatusClass(student.status)" style="position: static; font-size: 10px; padding: 2px 8px;">
+                      {{ student.status }}
+                    </span>
+                  </div>
+                  <h3 style="font-size: 15px; font-weight: 800; color: var(--text-main); margin: 6px 0;">{{ student.name }}</h3>
+                  <div class="card-footer" style="padding-top: 8px;">
+                    <span class="card-seating">جلوس: {{ student.seating_no }}</span>
+                    <div class="card-grade-box">
+                      <span class="card-grade-val" style="font-size: 16px;">{{ student.grade.toFixed(1) }}</span>
+                      <span class="card-grade-pct" style="font-size: 11px;">{{ ((student.grade / 320) * 100).toFixed(1) }}%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
               <!-- Empty State -->
-              <div v-if="results.length === 0" class="empty-state" style="border: none; border-radius: 0;">
+              <div v-if="results.length === 0" class="empty-state" style="border: none; padding: 40px 20px;">
                 <span class="empty-state-icon">🔍</span>
                 <h3>لا توجد نتائج مطابقة</h3>
                 <p>تأكد من خيارات الفلترة أو النص المدخل في شريط البحث.</p>
               </div>
             </div>
-          </section>
+          </div>
+
+          <!-- ANALYTICS DASHBOARD (Now pushed to bottom for better query UX) -->
+          <div style="display: flex; flex-direction: column; gap: 24px;">
+            <h2 style="font-size: 18px; font-weight: 800; padding: 0 4px;">📈 لوحة تحليلات البيانات الحالية</h2>
+            
+            <!-- Stats Dashboard Cards -->
+            <section class="stats-grid" style="margin: 0; padding: 0; width: 100%;">
+              <div class="stat-card glass-panel">
+                <div class="stat-icon primary">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                  </svg>
+                </div>
+                <div class="stat-details">
+                  <h3>إجمالي الطلاب</h3>
+                  <div class="stat-val">{{ stats.total.toLocaleString('ar-EG') }}</div>
+                </div>
+              </div>
+
+              <div class="stat-card glass-panel">
+                <div class="stat-icon success">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+                  </svg>
+                </div>
+                <div class="stat-details">
+                  <h3>نسبة النجاح العامة</h3>
+                  <div class="stat-val">{{ stats.passRate }}</div>
+                </div>
+              </div>
+
+              <div class="stat-card glass-panel">
+                <div class="stat-icon warning">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="6" x2="12" y2="12"/><polyline points="12 12 16 14"/>
+                  </svg>
+                </div>
+                <div class="stat-details">
+                  <h3>متوسط الدرجات</h3>
+                  <div class="stat-val">{{ stats.avgGrade }}</div>
+                </div>
+              </div>
+
+              <div class="stat-card glass-panel">
+                <div class="stat-icon danger">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                  </svg>
+                </div>
+                <div class="stat-details">
+                  <h3>إجمالي الغياب</h3>
+                  <div class="stat-val">{{ stats.absent.toLocaleString('ar-EG') }}</div>
+                </div>
+              </div>
+            </section>
+
+            <!-- SVG Charts (Visual Analytics) -->
+            <section class="charts-container" style="margin: 0; padding: 0;">
+              <!-- Grade Distribution Bar Chart -->
+              <div class="chart-card glass-panel" style="min-height: 240px;">
+                <h3 class="chart-title">📊 توزيع درجات الفئة المفلترة</h3>
+                <div class="chart-wrapper">
+                  <svg viewBox="0 0 400 200" width="100%" height="100%">
+                    <g v-if="getSum(chartGradeData) > 0">
+                      <line x1="40" y1="160" x2="380" y2="160" stroke="var(--border-color)" stroke-width="2" />
+                      
+                      <g v-for="(val, key, index) in chartGradeData" :key="key">
+                        <rect
+                          :x="55 + index * 55"
+                          :y="160 - (val / Math.max(...Object.values(chartGradeData))) * 130"
+                          width="30"
+                          :height="(val / Math.max(...Object.values(chartGradeData))) * 130"
+                          fill="url(#barGradient)"
+                          rx="4"
+                        />
+                        <text :x="70 + index * 55" y="178" font-size="10" text-anchor="middle" fill="var(--text-muted)" font-weight="700">
+                          {{ key === 'g90' ? '+90%' : key === 'g80' ? '80%' : key === 'g70' ? '70%' : key === 'g60' ? '60%' : key === 'g50' ? '50%' : 'رسوب' }}
+                        </text>
+                        <text :x="70 + index * 55" :y="150 - (val / Math.max(...Object.values(chartGradeData))) * 130" font-size="10" text-anchor="middle" fill="var(--text-main)" font-weight="700">
+                          {{ val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val }}
+                        </text>
+                      </g>
+                    </g>
+                    <text v-else x="200" y="100" text-anchor="middle" fill="var(--text-light)" font-size="14">لا توجد بيانات درجات للتمثيل البياني</text>
+                    <defs>
+                      <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="var(--primary-color)" />
+                        <stop offset="100%" stop-color="#818cf8" stop-opacity="0.3" />
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                </div>
+              </div>
+
+              <!-- Status Distribution Donut Chart -->
+              <div class="chart-card glass-panel" style="min-height: 240px;">
+                <h3 class="chart-title">🍩 نسبة حالات طلاب الفئة المفلترة</h3>
+                <div class="chart-wrapper">
+                  <svg viewBox="0 0 200 160" width="100%" height="100%">
+                    <g v-if="getSum(chartStatusData) > 0">
+                      <path
+                        v-if="chartStatusData.passed > 0"
+                        :d="getDonutSegment((chartStatusData.passed / getSum(chartStatusData)) * 100, 0)"
+                        fill="none"
+                        stroke="var(--success-color)"
+                        stroke-width="15"
+                      />
+                      <path
+                        v-if="chartStatusData.second > 0"
+                        :d="getDonutSegment((chartStatusData.second / getSum(chartStatusData)) * 100, (chartStatusData.passed / getSum(chartStatusData)) * 100)"
+                        fill="none"
+                        stroke="var(--warning-color)"
+                        stroke-width="15"
+                      />
+                      <path
+                        v-if="chartStatusData.failed > 0"
+                        :d="getDonutSegment(
+                          (chartStatusData.failed / getSum(chartStatusData)) * 100, 
+                          ((chartStatusData.passed + chartStatusData.second) / getSum(chartStatusData)) * 100
+                        )"
+                        fill="none"
+                        stroke="var(--danger-color)"
+                        stroke-width="15"
+                      />
+                      <path
+                        v-if="chartStatusData.absent > 0"
+                        :d="getDonutSegment(
+                          (chartStatusData.absent / getSum(chartStatusData)) * 100, 
+                          ((chartStatusData.passed + chartStatusData.second + chartStatusData.failed) / getSum(chartStatusData)) * 100
+                        )"
+                        fill="none"
+                        stroke="var(--absent-color)"
+                        stroke-width="15"
+                      />
+
+                      <text x="80" y="85" text-anchor="middle" font-size="14" font-weight="800" fill="var(--text-main)">
+                        {{ getSum(chartStatusData) >= 1000 ? (getSum(chartStatusData) / 1000).toFixed(1) + 'k' : getSum(chartStatusData) }}
+                      </text>
+                      <text x="80" y="98" text-anchor="middle" font-size="8" fill="var(--text-muted)">المجموع</text>
+
+                      <g transform="translate(135, 30)" font-size="9" font-weight="700">
+                        <circle cx="0" cy="0" r="4" fill="var(--success-color)" />
+                        <text x="10" y="3" fill="var(--text-muted)">ناجح</text>
+
+                        <circle cx="0" cy="20" r="4" fill="var(--warning-color)" />
+                        <text x="10" y="23" fill="var(--text-muted)">دور ثان</text>
+
+                        <circle cx="0" cy="40" r="4" fill="var(--danger-color)" />
+                        <text x="10" y="43" fill="var(--text-muted)">راسب</text>
+
+                        <circle cx="0" cy="60" r="4" fill="var(--absent-color)" />
+                        <text x="10" y="63" fill="var(--text-muted)">غائب</text>
+                      </g>
+                    </g>
+                    <text v-else x="100" y="80" text-anchor="middle" fill="var(--text-light)" font-size="14">لا توجد بيانات للتمثيل البياني</text>
+                  </svg>
+                </div>
+              </div>
+            </section>
+          </div>
 
         </div>
 
@@ -1181,7 +1210,6 @@ function getDonutSegment(percentage, previousPercentage, radius = 50) {
         <div class="modal-stat-row">
           <span class="modal-stat-label">المنطقة الجغرافية (القطاع)</span>
           <span class="modal-stat-val">
-            <!-- Dynamically check range and print sector name -->
             {{ selectedStudent.seating_no <= 2380000 ? 'قطاع القاهرة' : selectedStudent.seating_no <= 2550000 ? 'قطاع الإسكندرية' : selectedStudent.seating_no <= 2820000 ? 'قطاع المنصورة' : 'قطاع أسيوط' }}
           </span>
         </div>

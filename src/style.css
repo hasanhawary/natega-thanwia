@@ -1038,3 +1038,93 @@ body {
   }
 }
 
+/* Responsive Tables and Cards Fallback */
+.table-responsive-desktop {
+  display: block;
+}
+.cards-responsive-mobile {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .table-responsive-desktop {
+    display: none;
+  }
+  .cards-responsive-mobile {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+  }
+  
+  .student-mobile-card {
+    padding: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    cursor: pointer;
+    transition: transform 0.2s, border-color 0.2s;
+    position: relative;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.02);
+  }
+  .student-mobile-card:hover {
+    border-color: var(--primary-color);
+  }
+  .student-mobile-card:active {
+    transform: scale(0.98);
+  }
+  
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .card-rank {
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--primary-color);
+    background: var(--primary-glow);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-family: var(--font-english);
+  }
+  
+  .card-seating {
+    font-size: 11px;
+    color: var(--text-light);
+    font-family: var(--font-english);
+  }
+  
+  .card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px dashed var(--border-color);
+    padding-top: 10px;
+    margin-top: 4px;
+  }
+  
+  .card-grade-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  
+  .card-grade-val {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--text-main);
+    font-family: var(--font-english);
+  }
+  
+  .card-grade-pct {
+    font-size: 12px;
+    color: var(--primary-color);
+    font-weight: 700;
+    font-family: var(--font-english);
+  }
+}

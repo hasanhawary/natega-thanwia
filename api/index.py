@@ -7,23 +7,41 @@ import urllib.parse
 app = Flask(__name__)
 CORS(app) # Enable CORS for all routes
 
-# Helper to find SQLite database path
-POSSIBLE_PATHS = [
-    os.path.abspath(os.path.join(os.getcwd(), 'students.db')),
-    os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'students.db')),
-    os.path.abspath(os.path.join(os.path.dirname(__file__), 'students.db')),
-    os.path.abspath(os.path.join(os.path.abspath(os.sep), 'var', 'task', 'students.db'))
-]
+# Helper to find and load SQLite database (supports decompression to /tmp on Vercel)
+import gzip
+import shutil
 
-DATABASE_PATH = None
-for p in POSSIBLE_PATHS:
-    if os.path.exists(p):
-        DATABASE_PATH = p
-        break
+DATABASE_PATH = '/tmp/students.db'
 
-if not DATABASE_PATH:
-    # Default fallback
-    DATABASE_PATH = POSSIBLE_PATHS[0]
+if not os.path.exists(DATABASE_PATH):
+    POSSIBLE_GZ_PATHS = [
+        os.path.abspath(os.path.join(os.getcwd(), 'public', 'students.db.gz')),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'public', 'students.db.gz')),
+        os.path.abspath(os.path.join(os.getcwd(), 'students.db.gz')),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), 'students.db.gz')),
+        os.path.abspath(os.path.join(os.getcwd(), 'students.db')),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'students.db'))
+    ]
+    
+    gz_path = None
+    for p in POSSIBLE_GZ_PATHS:
+        if os.path.exists(p):
+            gz_path = p
+            break
+            
+    if gz_path:
+        if gz_path.endswith('.gz'):
+            print(f"Decompressing {gz_path} to {DATABASE_PATH}...")
+            with gzip.open(gz_path, 'rb') as f_in:
+                with open(DATABASE_PATH, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            print("Decompression finished.")
+        else:
+            print(f"Copying {gz_path} to {DATABASE_PATH}...")
+            shutil.copyfile(gz_path, DATABASE_PATH)
+    else:
+        # Final fallback
+        DATABASE_PATH = os.path.abspath(os.path.join(os.getcwd(), 'students.db'))
 
 def get_db_connection():
     conn = sqlite3.connect(DATABASE_PATH)

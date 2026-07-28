@@ -15,6 +15,7 @@ const isDarkMode = ref(false);
 // Query States
 const searchQuery = ref('');
 const searchMode = ref('name'); // 'name' | 'seating'
+const nameMatchMode = ref('prefix'); // 'prefix' | 'exact' | 'contains'
 const results = ref([]);
 const searching = ref(false);
 const showLeaderboard = ref(true);
@@ -24,6 +25,20 @@ const selectedSectors = ref(['cairo', 'alex', 'mansoura', 'assiut']);
 const selectedStatuses = ref([1, 2, 3, 4]); // 1: ناجح, 2: دور ثان, 3: راسب, 4: غائب
 const minGrade = ref(0);
 const maxGrade = ref(320);
+
+// Mobile Drawer State
+const isDrawerOpen = ref(false);
+
+// Detailed Modal States
+const showModal = ref(false);
+const selectedStudent = ref(null);
+const studentRank = ref(0);
+const studentPercentile = ref(0);
+const loadingRank = ref(false);
+
+// Chart Data States
+const chartGradeData = ref({ g90: 0, g80: 0, g70: 0, g60: 0, g50: 0, g_fail: 0 });
+const chartStatusData = ref({ passed: 0, second: 0, failed: 0, absent: 0 });
 
 // Global Stats (Pre-calculated for instant dashboard loading)
 const stats = {
@@ -191,7 +206,7 @@ onMounted(async () => {
     db.value = new SQL.Database(dbBuffer);
     loading.value = false;
     
-    // Initial fetch of leaderboard
+    // Initial fetch of leaderboard and charts
     fetchResults();
   } catch (err) {
     error.value = err.message;
@@ -222,114 +237,115 @@ async function clearCacheAndReload() {
   }
 }
 
+// Normalize Arabic names
+function normalizeArabic(text) {
+  return text
+    .replace(/[أإآا]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .trim();
+}
+
+// Build SQL where conditions based on active filters
+function buildWhereClause() {
+  let conditions = [];
+  let params = [];
+
+  // 1. Status Filter
+  if (selectedStatuses.value.length > 0) {
+    const placeholders = selectedStatuses.value.map(() => '?').join(',');
+    conditions.push(`s.status_id IN (${placeholders})`);
+    params.push(...selectedStatuses.value);
+  } else {
+    return { clause: "WHERE 1=0", params: [] };
+  }
+
+  // 2. Grade Filter
+  conditions.push("s.grade >= ? AND s.grade <= ?");
+  params.push(minGrade.value, maxGrade.value);
+
+  // 3. Sector/Seating No Ranges Filter
+  let sectorConditions = [];
+  if (selectedSectors.value.includes('cairo')) {
+    sectorConditions.push("(s.seating_no >= 2000000 AND s.seating_no <= 2380000)");
+  }
+  if (selectedSectors.value.includes('alex')) {
+    sectorConditions.push("(s.seating_no >= 2380001 AND s.seating_no <= 2550000)");
+  }
+  if (selectedSectors.value.includes('mansoura')) {
+    sectorConditions.push("(s.seating_no >= 2550001 AND s.seating_no <= 2820000)");
+  }
+  if (selectedSectors.value.includes('assiut')) {
+    sectorConditions.push("(s.seating_no >= 2820001 AND s.seating_no <= 3000000)");
+  }
+
+  if (sectorConditions.length > 0) {
+    conditions.push(`(${sectorConditions.join(' OR ')})`);
+  } else {
+    return { clause: "WHERE 1=0", params: [] };
+  }
+
+  // 4. Search Filter
+  const searchVal = searchQuery.value.trim();
+  if (searchVal) {
+    showLeaderboard.value = false;
+    if (searchMode.value === 'seating') {
+      const sno = parseInt(searchVal);
+      if (!isNaN(sno)) {
+        conditions.push("s.seating_no = ?");
+        params.push(sno);
+      } else {
+        return { clause: "WHERE 1=0", params: [] };
+      }
+    } else {
+      // Normalizing the search text
+      let prefix = normalizeArabic(searchVal);
+      
+      if (nameMatchMode.value === 'exact') {
+        conditions.push("s.name = ?");
+        params.push(prefix);
+      } else if (nameMatchMode.value === 'contains') {
+        conditions.push("s.name LIKE ?");
+        params.push(`%${prefix}%`);
+      } else {
+        // 'prefix' mode: range query to utilize the name index efficiently
+        conditions.push("s.name >= ? AND s.name < ?");
+        params.push(prefix);
+
+        const lastChar = prefix.charCodeAt(prefix.length - 1);
+        const prefixUpper = prefix.slice(0, -1) + String.fromCharCode(lastChar + 1);
+        params.push(prefixUpper);
+      }
+    }
+  } else {
+    showLeaderboard.value = true;
+  }
+
+  const clause = conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+  return { clause, params };
+}
+
 // Fetch Results based on Search & Filters
 function fetchResults() {
   if (!db.value) return;
   searching.value = true;
 
   try {
-    let query = "";
-    let params = [];
-
-    // Base conditions
-    let conditions = [];
-
-    // 1. Status Filter
-    if (selectedStatuses.value.length > 0) {
-      const placeholders = selectedStatuses.value.map(() => '?').join(',');
-      conditions.push(`s.status_id IN (${placeholders})`);
-      params.push(...selectedStatuses.value);
-    } else {
+    const { clause, params } = buildWhereClause();
+    if (clause === "WHERE 1=0") {
       results.value = [];
       searching.value = false;
       return;
     }
 
-    // 2. Grade Filter
-    conditions.push("s.grade >= ? AND s.grade <= ?");
-    params.push(minGrade.value, maxGrade.value);
-
-    // 3. Sector/Seating No Ranges Filter
-    let sectorConditions = [];
-    if (selectedSectors.value.includes('cairo')) {
-      sectorConditions.push("(s.seating_no >= 2000000 AND s.seating_no <= 2380000)");
-    }
-    if (selectedSectors.value.includes('alex')) {
-      sectorConditions.push("(s.seating_no >= 2380001 AND s.seating_no <= 2550000)");
-    }
-    if (selectedSectors.value.includes('mansoura')) {
-      sectorConditions.push("(s.seating_no >= 2550001 AND s.seating_no <= 2820000)");
-    }
-    if (selectedSectors.value.includes('assiut')) {
-      sectorConditions.push("(s.seating_no >= 2820001 AND s.seating_no <= 3000000)");
-    }
-
-    if (sectorConditions.length > 0) {
-      conditions.push(`(${sectorConditions.join(' OR ')})`);
-    } else {
-      results.value = [];
-      searching.value = false;
-      return;
-    }
-
-    // 4. Search Filter
-    const searchVal = searchQuery.value.trim();
-    if (searchVal) {
-      showLeaderboard.value = false;
-      if (searchMode.value === 'seating') {
-        const sno = parseInt(searchVal);
-        if (!isNaN(sno)) {
-          conditions.push("s.seating_no = ?");
-          params.push(sno);
-        } else {
-          results.value = [];
-          searching.value = false;
-          return;
-        }
-      } else {
-        // Range query to utilize the name index efficiently: name >= prefix AND name < prefix_upper
-        // Normalizing the search text first
-        let prefix = searchVal
-          .replace(/[أإآا]/g, 'ا')
-          .replace(/ة/g, 'ه')
-          .replace(/ى/g, 'ي');
-        
-        conditions.push("s.name >= ? AND s.name < ?");
-        params.push(prefix);
-
-        // Calculate upper bound prefix
-        const lastChar = prefix.charCodeAt(prefix.length - 1);
-        const prefixUpper = prefix.slice(0, -1) + String.fromCharCode(lastChar + 1);
-        params.push(prefixUpper);
-      }
-    } else {
-      showLeaderboard.value = true;
-    }
-
-    // Assembly Query
-    const whereClause = conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
-    
-    if (showLeaderboard.value) {
-      // Show top 100 students matching the filters
-      query = `
-        SELECT s.seating_no, s.name, s.grade, c.name as status_name 
-        FROM students s 
-        JOIN statuses c ON s.status_id = c.id
-        ${whereClause}
-        ORDER BY s.grade DESC 
-        LIMIT 100
-      `;
-    } else {
-      // Normal search query
-      query = `
-        SELECT s.seating_no, s.name, s.grade, c.name as status_name 
-        FROM students s 
-        JOIN statuses c ON s.status_id = c.id
-        ${whereClause}
-        ORDER BY s.grade DESC
-        LIMIT 100
-      `;
-    }
+    const query = `
+      SELECT s.seating_no, s.name, s.grade, c.name as status_name 
+      FROM students s 
+      JOIN statuses c ON s.status_id = c.id
+      ${clause}
+      ORDER BY s.grade DESC
+      LIMIT 100
+    `;
 
     const stmt = db.value.prepare(query);
     stmt.bind(params);
@@ -347,6 +363,9 @@ function fetchResults() {
     stmt.free();
 
     results.value = tempResults;
+
+    // Trigger debounced update of charts
+    updateChartsData(clause, params);
   } catch (err) {
     console.error("Query Error:", err);
   } finally {
@@ -354,12 +373,79 @@ function fetchResults() {
   }
 }
 
+// Debounced charts update to keep UI responsive
+let chartTimeout = null;
+function updateChartsData(clause, params) {
+  if (chartTimeout) clearTimeout(chartTimeout);
+  chartTimeout = setTimeout(() => {
+    runChartsQuery(clause, params);
+  }, 350);
+}
+
+// Aggregate data for SVG charts
+function runChartsQuery(clause, params) {
+  if (!db.value) return;
+  try {
+    // 1. Grade ranges aggregate query
+    const gradeQuery = `
+      SELECT 
+        SUM(CASE WHEN grade >= 288 THEN 1 ELSE 0 END) as g90,
+        SUM(CASE WHEN grade >= 256 AND grade < 288 THEN 1 ELSE 0 END) as g80,
+        SUM(CASE WHEN grade >= 224 AND grade < 256 THEN 1 ELSE 0 END) as g70,
+        SUM(CASE WHEN grade >= 192 AND grade < 224 THEN 1 ELSE 0 END) as g60,
+        SUM(CASE WHEN grade >= 160 AND grade < 192 THEN 1 ELSE 0 END) as g50,
+        SUM(CASE WHEN grade < 160 THEN 1 ELSE 0 END) as g_fail
+      FROM students s
+      ${clause}
+    `;
+    const gradeStmt = db.value.prepare(gradeQuery);
+    gradeStmt.bind(params);
+    if (gradeStmt.step()) {
+      const row = gradeStmt.getAsObject();
+      chartGradeData.value = {
+        g90: row.g90 || 0,
+        g80: row.g80 || 0,
+        g70: row.g70 || 0,
+        g60: row.g60 || 0,
+        g50: row.g50 || 0,
+        g_fail: row.g_fail || 0
+      };
+    }
+    gradeStmt.free();
+
+    // 2. Status distribution query
+    const statusQuery = `
+      SELECT s.status_id, COUNT(*) as cnt 
+      FROM students s
+      ${clause}
+      GROUP BY s.status_id
+    `;
+    const statusStmt = db.value.prepare(statusQuery);
+    statusStmt.bind(params);
+    let counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    while (statusStmt.step()) {
+      const row = statusStmt.getAsObject();
+      counts[row.status_id] = row.cnt;
+    }
+    statusStmt.free();
+
+    chartStatusData.value = {
+      passed: counts[1],
+      second: counts[2],
+      failed: counts[3],
+      absent: counts[4]
+    };
+  } catch (err) {
+    console.error("Charts aggregation error:", err);
+  }
+}
+
 // Watch filters for live updates
-watch([selectedSectors, selectedStatuses, minGrade, maxGrade, searchMode], () => {
+watch([selectedSectors, selectedStatuses, minGrade, maxGrade, searchMode, nameMatchMode], () => {
   fetchResults();
 }, { deep: true });
 
-// Handle search keyup / click
+// Handle search trigger
 function handleSearch() {
   fetchResults();
 }
@@ -372,10 +458,104 @@ function handleSearchModeChange(mode) {
 
 // Helper to determine status class
 function getStatusClass(statusStr) {
+  if (!statusStr) return 'status-absent';
   if (statusStr.includes('ناجح')) return 'status-passed';
   if (statusStr.includes('ثان')) return 'status-second';
   if (statusStr.includes('راسب')) return 'status-failed';
   return 'status-absent';
+}
+
+// Circular progress dashoffset calculator
+const dashArray = 440;
+function getDashOffset(percentage) {
+  return dashArray - (dashArray * percentage) / 100;
+}
+
+// Detailed modal calculations
+async function openStudentDetails(student) {
+  selectedStudent.value = student;
+  showModal.value = true;
+  loadingRank.value = true;
+  studentRank.value = 0;
+  studentPercentile.value = 0;
+
+  // Let the modal open animation complete, then execute ranking query
+  setTimeout(() => {
+    if (!db.value || !selectedStudent.value) return;
+    try {
+      const currentGrade = selectedStudent.value.grade;
+      
+      // Fast index rank count
+      const rankQuery = "SELECT COUNT(*) + 1 as rank FROM students WHERE grade > ?";
+      const stmt = db.value.prepare(rankQuery);
+      stmt.bind([currentGrade]);
+      if (stmt.step()) {
+        const row = stmt.getAsObject();
+        studentRank.value = row.rank;
+        // Percentile calculator
+        const percentile = ((919396 - row.rank) / 919396) * 100;
+        studentPercentile.value = Math.max(0.1, Math.min(100, percentile));
+      }
+      stmt.free();
+    } catch (err) {
+      console.error("Rank calculation error:", err);
+    } finally {
+      loadingRank.value = false;
+    }
+  }, 200);
+}
+
+function closeStudentDetails() {
+  showModal.value = false;
+  selectedStudent.value = null;
+}
+
+// Export data to CSV
+function exportToCSV() {
+  if (results.value.length === 0) return;
+  try {
+    let csvContent = "\uFEFF"; // UTF-8 BOM to fix Arabic excel rendering
+    csvContent += "رقم الجلوس,الاسم الكامل,الدرجة الكلية,النسبة المئوية,حالة الطالب\n";
+
+    results.value.forEach(row => {
+      const percentage = ((row.grade / 320) * 100).toFixed(2) + "%";
+      const cleanName = row.name.replace(/,/g, ' '); // Avoid CSV splitting on comma inside name
+      csvContent += `${row.seating_no},${cleanName},${row.grade.toFixed(1)},${percentage},${row.status}\n`;
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", "نتائج_البحث_الثانوية_العامة.csv");
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } catch (err) {
+    console.error("CSV Export error:", err);
+    alert("حدث خطأ أثناء تصدير الملف.");
+  }
+}
+
+// Helper to count totals in charts to prevent division by zero
+const getSum = (obj) => Object.values(obj).reduce((a, b) => a + b, 0);
+
+// Calculate donut segment path
+function getDonutSegment(percentage, previousPercentage, radius = 50) {
+  const cx = 80;
+  const cy = 80;
+  const startAngle = (previousPercentage * 360) / 100 - 90;
+  const endAngle = ((previousPercentage + percentage) * 360) / 100 - 90;
+
+  const rad = Math.PI / 180;
+  const x1 = cx + radius * Math.cos(startAngle * rad);
+  const y1 = cy + radius * Math.sin(startAngle * rad);
+  const x2 = cx + radius * Math.cos(endAngle * rad);
+  const y2 = cy + radius * Math.sin(endAngle * rad);
+
+  const largeArcFlag = percentage > 50 ? 1 : 0;
+  return `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2} ${y2}`;
 }
 </script>
 
@@ -497,12 +677,133 @@ function getStatusClass(statusStr) {
         </div>
       </section>
 
+      <!-- SVG Charts (Visual Analytics) -->
+      <section class="charts-container">
+        <!-- Grade Distribution Bar Chart -->
+        <div class="chart-card glass-panel">
+          <h3 class="chart-title">📊 توزيع الدرجات للطلاب المختارين</h3>
+          <div class="chart-wrapper">
+            <svg viewBox="0 0 400 200" width="100%" height="100%">
+              <g v-if="getSum(chartGradeData) > 0">
+                <!-- Max count finder for scaling -->
+                <line x1="40" y1="160" x2="380" y2="160" stroke="var(--border-color)" stroke-width="2" />
+                
+                <!-- Bars -->
+                <!-- We map the bars dynamically based on maximum value -->
+                <g v-for="(val, key, index) in chartGradeData" :key="key">
+                  <rect
+                    :x="55 + index * 55"
+                    :y="160 - (val / Math.max(...Object.values(chartGradeData))) * 130"
+                    width="30"
+                    :height="(val / Math.max(...Object.values(chartGradeData))) * 130"
+                    fill="url(#barGradient)"
+                    rx="4"
+                  />
+                  <!-- Labels -->
+                  <text :x="70 + index * 55" y="178" font-size="10" text-anchor="middle" fill="var(--text-muted)" font-weight="700">
+                    {{ key === 'g90' ? '+90%' : key === 'g80' ? '80%' : key === 'g70' ? '70%' : key === 'g60' ? '60%' : key === 'g50' ? '50%' : 'رسوب' }}
+                  </text>
+                  <!-- Value count -->
+                  <text :x="70 + index * 55" :y="150 - (val / Math.max(...Object.values(chartGradeData))) * 130" font-size="10" text-anchor="middle" fill="var(--text-main)" font-weight="700">
+                    {{ val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val }}
+                  </text>
+                </g>
+              </g>
+              <text v-else x="200" y="100" text-anchor="middle" fill="var(--text-light)" font-size="14">لا توجد بيانات درجات للتمثيل البياني</text>
+              <defs>
+                <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="var(--primary-color)" />
+                  <stop offset="100%" stop-color="#818cf8" stop-opacity="0.3" />
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Status Distribution Donut Chart -->
+        <div class="chart-card glass-panel">
+          <h3 class="chart-title">🍩 نسبة حالات الطلاب المختارين</h3>
+          <div class="chart-wrapper">
+            <svg viewBox="0 0 200 160" width="100%" height="100%">
+              <g v-if="getSum(chartStatusData) > 0">
+                <!-- Donut Chart Segments -->
+                <path
+                  v-if="chartStatusData.passed > 0"
+                  :d="getDonutSegment((chartStatusData.passed / getSum(chartStatusData)) * 100, 0)"
+                  fill="none"
+                  stroke="var(--success-color)"
+                  stroke-width="15"
+                />
+                <path
+                  v-if="chartStatusData.second > 0"
+                  :d="getDonutSegment((chartStatusData.second / getSum(chartStatusData)) * 100, (chartStatusData.passed / getSum(chartStatusData)) * 100)"
+                  fill="none"
+                  stroke="var(--warning-color)"
+                  stroke-width="15"
+                />
+                <path
+                  v-if="chartStatusData.failed > 0"
+                  :d="getDonutSegment(
+                    (chartStatusData.failed / getSum(chartStatusData)) * 100, 
+                    ((chartStatusData.passed + chartStatusData.second) / getSum(chartStatusData)) * 100
+                  )"
+                  fill="none"
+                  stroke="var(--danger-color)"
+                  stroke-width="15"
+                />
+                <path
+                  v-if="chartStatusData.absent > 0"
+                  :d="getDonutSegment(
+                    (chartStatusData.absent / getSum(chartStatusData)) * 100, 
+                    ((chartStatusData.passed + chartStatusData.second + chartStatusData.failed) / getSum(chartStatusData)) * 100
+                  )"
+                  fill="none"
+                  stroke="var(--absent-color)"
+                  stroke-width="15"
+                />
+
+                <!-- Centered Total text -->
+                <text x="80" y="85" text-anchor="middle" font-size="14" font-weight="800" fill="var(--text-main)">
+                  {{ getSum(chartStatusData) >= 1000 ? (getSum(chartStatusData) / 1000).toFixed(1) + 'k' : getSum(chartStatusData) }}
+                </text>
+                <text x="80" y="98" text-anchor="middle" font-size="8" fill="var(--text-muted)">إجمالي التصفية</text>
+
+                <!-- Legends -->
+                <g transform="translate(135, 30)" font-size="9" font-weight="700">
+                  <circle cx="0" cy="0" r="4" fill="var(--success-color)" />
+                  <text x="10" y="3" fill="var(--text-muted)">ناجح</text>
+
+                  <circle cx="0" cy="20" r="4" fill="var(--warning-color)" />
+                  <text x="10" y="23" fill="var(--text-muted)">دور ثان</text>
+
+                  <circle cx="0" cy="40" r="4" fill="var(--danger-color)" />
+                  <text x="10" y="43" fill="var(--text-muted)">راسب</text>
+
+                  <circle cx="0" cy="60" r="4" fill="var(--absent-color)" />
+                  <text x="10" y="63" fill="var(--text-muted)">غائب</text>
+                </g>
+              </g>
+              <text v-else x="100" y="80" text-anchor="middle" fill="var(--text-light)" font-size="14">لا توجد حالات طلاب للتمثيل البياني</text>
+            </svg>
+          </div>
+        </div>
+      </section>
+
       <!-- Search & Workspace Layout -->
       <div class="dashboard-layout">
         
         <!-- Sidebar Filter controls -->
-        <aside class="filters-sidebar glass-panel">
+        <!-- Drawer backdrop for mobile -->
+        <div v-if="isDrawerOpen" class="drawer-backdrop" @click="isDrawerOpen = false"></div>
+        
+        <aside class="filters-sidebar glass-panel" :class="{ 'drawer-open': isDrawerOpen }">
           
+          <!-- Close button inside drawer for mobile -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;" v-if="isDrawerOpen">
+            <h3 style="font-size: 16px; font-weight: 800;">تصفية وفرز النتائج</h3>
+            <button class="btn-control" @click="isDrawerOpen = false" style="padding: 6px 12px; font-size: 12px;">إغلاق</button>
+          </div>
+
           <!-- Sector Filters -->
           <div>
             <div class="filter-section-title">
@@ -590,7 +891,7 @@ function getStatusClass(statusStr) {
               <input 
                 type="text" 
                 v-model="searchQuery" 
-                :placeholder="searchMode === 'name' ? 'أدخل اسم الطالب (مثال: عبدالله محمود عمر...)' : 'أدخل رقم الجلوس المكون من 7 أرقام...'"
+                :placeholder="searchMode === 'name' ? 'أدخل اسم الطالب (مثال: نغم ياسر...)' : 'أدخل رقم الجلوس المكون من 7 أرقام...'"
                 @keyup.enter="handleSearch"
               />
               <svg class="search-icon-svg" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -603,14 +904,14 @@ function getStatusClass(statusStr) {
             </button>
           </section>
 
-          <div style="padding: 0 8px;">
-            <div class="search-modes">
+          <div style="padding: 0 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div class="search-modes" style="margin-top: 0;">
               <button 
                 class="mode-tab" 
                 :class="{ active: searchMode === 'name' }" 
                 @click="handleSearchModeChange('name')"
               >
-                البحث بالاسم ثنائي فأكثر
+                البحث بالاسم
               </button>
               <button 
                 class="mode-tab" 
@@ -620,23 +921,59 @@ function getStatusClass(statusStr) {
                 البحث برقم الجلوس
               </button>
             </div>
+
+            <!-- Name Matching Modes -->
+            <div v-if="searchMode === 'name'" class="search-modes" style="margin-top: 0; background: var(--bg-card); padding: 4px; border-radius: 20px; border: 1px solid var(--border-color);">
+              <button 
+                class="mode-tab" 
+                :class="{ active: nameMatchMode === 'prefix' }" 
+                @click="nameMatchMode = 'prefix'"
+                title="يبحث عن الأسماء التي تبدأ بالنص المدخل (سريع جداً)"
+              >
+                يبدأ بـ
+              </button>
+              <button 
+                class="mode-tab" 
+                :class="{ active: nameMatchMode === 'exact' }" 
+                @click="nameMatchMode = 'exact'"
+                title="مطابقة الاسم الكامل تماماً"
+              >
+                مطابقة تامة
+              </button>
+              <button 
+                class="mode-tab" 
+                :class="{ active: nameMatchMode === 'contains' }" 
+                @click="nameMatchMode = 'contains'"
+                title="يبحث عن أي تطابق داخل الاسم (قد يستغرق 1-2 ثانية)"
+              >
+                يحتوي على
+              </button>
+            </div>
           </div>
 
-          <!-- Leaderboard Panel (National / Filtered top list) -->
-          <section v-if="showLeaderboard" class="leaderboard-panel glass-panel">
-            <div class="leaderboard-header">
-              <div class="leaderboard-title">
-                <span style="font-size: 24px;">🏆</span>
-                <h2>الطلاب الأوائل (حسب الفلترة الحالية)</h2>
-              </div>
-              <span class="results-count" style="font-size: 13px;">أعلى 100 طالب</span>
+          <!-- Results Header Actions -->
+          <div class="results-header" style="margin-top: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h2 class="results-title">{{ showLeaderboard ? 'الطلاب الأوائل (حسب الفلترة)' : 'نتائج البحث الحالي' }}</h2>
+              <span class="results-count">تم العثور على {{ results.length }} طالب</span>
             </div>
 
-            <div class="leaderboard-table-container">
+            <!-- CSV Export button -->
+            <button v-if="results.length > 0" class="btn-export" @click="exportToCSV" title="تصدير النتائج كملف CSV">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              <span>تحميل التقرير (Excel)</span>
+            </button>
+          </div>
+
+          <!-- Leaderboard / Results Table View -->
+          <section class="leaderboard-panel glass-panel" style="padding: 0; overflow: hidden; margin-top: 4px;">
+            <div class="leaderboard-table-container" style="border: none; border-radius: 0;">
               <table class="leaderboard-table">
                 <thead>
                   <tr>
-                    <th style="width: 70px; text-align: center;">الترتيب</th>
+                    <th style="width: 70px; text-align: center;">#</th>
                     <th style="width: 120px;">رقم الجلوس</th>
                     <th>الاسم الكامل</th>
                     <th style="width: 100px; text-align: center;">الدرجة</th>
@@ -645,9 +982,9 @@ function getStatusClass(statusStr) {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(student, index) in results" :key="student.seating_no">
+                  <tr v-for="(student, index) in results" :key="student.seating_no" @click="openStudentDetails(student)" style="cursor: pointer;">
                     <td style="text-align: center;">
-                      <div class="rank-badge" :class="'rank-' + (index + 1) <= 3 ? 'rank-' + (index + 1) : 'rank-other'">
+                      <div class="rank-badge" :class="index < 3 ? 'rank-' + (index + 1) : 'rank-other'">
                         {{ index + 1 }}
                       </div>
                     </td>
@@ -671,50 +1008,13 @@ function getStatusClass(statusStr) {
                   </tr>
                 </tbody>
               </table>
+
+              <!-- Empty State -->
               <div v-if="results.length === 0" class="empty-state" style="border: none; border-radius: 0;">
                 <span class="empty-state-icon">🔍</span>
                 <h3>لا توجد نتائج مطابقة</h3>
-                <p>يرجى تعديل خيارات الفلترة لعرض الأوائل.</p>
+                <p>تأكد من خيارات الفلترة أو النص المدخل في شريط البحث.</p>
               </div>
-            </div>
-          </section>
-
-          <!-- Search Results Layout -->
-          <section v-else style="display: flex; flex-direction: column; gap: 16px;">
-            <div class="results-header">
-              <h2 class="results-title">نتائج البحث</h2>
-              <span class="results-count">تم العثور على {{ results.length }} طالب</span>
-            </div>
-
-            <!-- List Grid -->
-            <div v-if="results.length > 0" class="students-list-grid">
-              <div v-for="student in results" :key="student.seating_no" class="student-card glass-panel">
-                <span class="student-badge-status" :class="getStatusClass(student.status)">
-                  {{ student.status }}
-                </span>
-                
-                <div>
-                  <div class="student-seating-no">رقم الجلوس: {{ student.seating_no }}</div>
-                  <h3 class="student-name">{{ student.name }}</h3>
-                </div>
-
-                <div class="student-score-box">
-                  <div class="student-grade">
-                    <span class="label">المجموع الكلي</span>
-                    <span class="val">{{ student.grade.toFixed(1) }} <span>/ 320</span></span>
-                  </div>
-                  <div class="student-percent">
-                    <div class="val">{{ ((student.grade / 320) * 100).toFixed(1) }}%</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Empty Results -->
-            <div v-else class="empty-state glass-panel">
-              <span class="empty-state-icon">🔍</span>
-              <h3>لم نجد أي طالب يطابق البحث</h3>
-              <p>تأكد من كتابة الاسم بشكل صحيح بدون حروف الجر أو أخطاء إملائية، أو تأكد من إدخال رقم جلوس صحيح من 7 أرقام.</p>
             </div>
           </section>
 
@@ -724,4 +1024,80 @@ function getStatusClass(statusStr) {
 
     </div>
   </main>
+
+  <!-- Floating Action Button for Mobile Filters Drawer -->
+  <button class="btn-fab" @click="isDrawerOpen = true" title="تصفية وتصنيف النتائج">
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+    </svg>
+  </button>
+
+  <!-- Detailed Student Report Modal -->
+  <div v-if="showModal && selectedStudent" class="modal-backdrop" @click.self="closeStudentDetails">
+    <div class="modal-content glass-panel">
+      <button class="modal-close" @click="closeStudentDetails">✕</button>
+      
+      <div style="text-align: center; margin-bottom: 16px;">
+        <span style="font-size: 11px; color: var(--text-light); font-weight: 600; font-family: var(--font-english);">رقم الجلوس: {{ selectedStudent.seating_no }}</span>
+        <h2 style="font-size: 18px; font-weight: 800; color: var(--text-main); margin-top: 4px; line-height: 1.4;">{{ selectedStudent.name }}</h2>
+      </div>
+
+      <!-- Circular Grade Gauge -->
+      <div class="gauge-container">
+        <svg class="gauge-svg">
+          <circle class="gauge-bg" cx="75" cy="75" r="70"></circle>
+          <circle class="gauge-fill" cx="75" cy="75" r="70" :style="{ strokeDashoffset: getDashOffset((selectedStudent.grade / 320) * 100) }"></circle>
+          
+          <defs>
+            <linearGradient id="gauge-gradient" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="var(--primary-color)" />
+              <stop offset="100%" stop-color="var(--success-color)" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <div class="gauge-text">
+          <span class="gauge-percent">{{ ((selectedStudent.grade / 320) * 100).toFixed(1) }}%</span>
+          <span class="gauge-label">{{ selectedStudent.grade.toFixed(1) }} / 320 درجة</span>
+        </div>
+      </div>
+
+      <!-- Detailed Stats List -->
+      <div class="modal-stats-list">
+        <div class="modal-stat-row">
+          <span class="modal-stat-label">الحالة العامة</span>
+          <span class="student-badge-status" :class="getStatusClass(selectedStudent.status)" style="position: static; display: inline-block;">
+            {{ selectedStudent.status }}
+          </span>
+        </div>
+
+        <div class="modal-stat-row">
+          <span class="modal-stat-label">الترتيب على الجمهورية</span>
+          <span v-if="loadingRank" class="modal-stat-val" style="color: var(--text-light)">جاري الحساب...</span>
+          <span v-else class="modal-stat-val" style="color: var(--primary-color); font-size: 16px; font-weight: 800; font-family: var(--font-english);">
+            #{{ studentRank.toLocaleString('en-US') }}
+          </span>
+        </div>
+
+        <div class="modal-stat-row">
+          <span class="modal-stat-label">التفوق الإحصائي</span>
+          <span v-if="loadingRank" class="modal-stat-val" style="color: var(--text-light)">جاري الحساب...</span>
+          <span v-else class="modal-stat-val" style="color: var(--success-color); font-weight: 800; font-family: var(--font-english);">
+            أفضل من {{ studentPercentile.toFixed(2) }}% من الطلاب
+          </span>
+        </div>
+
+        <div class="modal-stat-row">
+          <span class="modal-stat-label">المنطقة الجغرافية (القطاع)</span>
+          <span class="modal-stat-val">
+            <!-- Dynamically check range and print sector name -->
+            {{ selectedStudent.seating_no <= 2380000 ? 'قطاع القاهرة' : selectedStudent.seating_no <= 2550000 ? 'قطاع الإسكندرية' : selectedStudent.seating_no <= 2820000 ? 'قطاع المنصورة' : 'قطاع أسيوط' }}
+          </span>
+        </div>
+      </div>
+
+      <button class="btn-search" style="width: 100%; margin-top: 20px;" @click="closeStudentDetails">
+        <span>إغلاق التقرير</span>
+      </button>
+    </div>
+  </div>
 </template>

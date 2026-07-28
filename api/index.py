@@ -34,7 +34,7 @@ if not os.path.exists(DATABASE_PATH):
             print(f"Decompressing {gz_path} to {DATABASE_PATH}...")
             with gzip.open(gz_path, 'rb') as f_in:
                 with open(DATABASE_PATH, 'wb') as f_out:
-                    shutil.copyfileobj(f_in, f_out)
+                    shutil.copyfileobj(f_in, f_out, length=1024*1024)
             print("Decompression finished.")
         else:
             print(f"Copying {gz_path} to {DATABASE_PATH}...")
@@ -157,48 +157,39 @@ def search():
                 "status": r["status_name"]
             })
 
-        # Query 2: Aggregate charts data
-        # To avoid heavy calculations on too many rows, we compute aggregates under the same filters
-        grade_query = f"""
+        # Query 2: Aggregate charts data (Combined scan for grades and statuses)
+        agg_query = f"""
             SELECT 
                 SUM(CASE WHEN grade >= 288 THEN 1 ELSE 0 END) as g90,
                 SUM(CASE WHEN grade >= 256 AND grade < 288 THEN 1 ELSE 0 END) as g80,
                 SUM(CASE WHEN grade >= 224 AND grade < 256 THEN 1 ELSE 0 END) as g70,
                 SUM(CASE WHEN grade >= 192 AND grade < 224 THEN 1 ELSE 0 END) as g60,
                 SUM(CASE WHEN grade >= 160 AND grade < 192 THEN 1 ELSE 0 END) as g50,
-                SUM(CASE WHEN grade < 160 THEN 1 ELSE 0 END) as g_fail
+                SUM(CASE WHEN grade < 160 THEN 1 ELSE 0 END) as g_fail,
+                SUM(CASE WHEN status_id = 1 THEN 1 ELSE 0 END) as s1,
+                SUM(CASE WHEN status_id = 2 THEN 1 ELSE 0 END) as s2,
+                SUM(CASE WHEN status_id = 3 THEN 1 ELSE 0 END) as s3,
+                SUM(CASE WHEN status_id = 4 THEN 1 ELSE 0 END) as s4
             FROM students s
             {where_clause}
         """
-        cursor.execute(grade_query, params)
-        grade_row = cursor.fetchone()
+        cursor.execute(agg_query, params)
+        agg_row = cursor.fetchone()
         
         charts_grade = {
-            "g90": grade_row["g90"] or 0,
-            "g80": grade_row["g80"] or 0,
-            "g70": grade_row["g70"] or 0,
-            "g60": grade_row["g60"] or 0,
-            "g50": grade_row["g50"] or 0,
-            "g_fail": grade_row["g_fail"] or 0
+            "g90": agg_row["g90"] or 0,
+            "g80": agg_row["g80"] or 0,
+            "g70": agg_row["g70"] or 0,
+            "g60": agg_row["g60"] or 0,
+            "g50": agg_row["g50"] or 0,
+            "g_fail": agg_row["g_fail"] or 0
         }
-
-        status_query = f"""
-            SELECT s.status_id, COUNT(*) as cnt 
-            FROM students s
-            {where_clause}
-            GROUP BY s.status_id
-        """
-        cursor.execute(status_query, params)
-        status_rows = cursor.fetchall()
-        status_counts = {1: 0, 2: 0, 3: 0, 4: 0}
-        for r in status_rows:
-            status_counts[r["status_id"]] = r["cnt"]
-
+        
         charts_status = {
-            "passed": status_counts[1],
-            "second": status_counts[2],
-            "failed": status_counts[3],
-            "absent": status_counts[4]
+            "passed": agg_row["s1"] or 0,
+            "second": agg_row["s2"] or 0,
+            "failed": agg_row["s3"] or 0,
+            "absent": agg_row["s4"] or 0
         }
 
         conn.close()
